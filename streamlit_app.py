@@ -66,10 +66,11 @@ st.markdown(
     """
     <style>
       #MainMenu, footer, header [data-testid="stToolbar"] {visibility: hidden;}
+      .stApp {background: linear-gradient(180deg, #eef2ff 0%, #f5f7fb 40%);}
       .block-container {padding-top: 2.5rem; max-width: 760px;}
       h1 {font-size: 1.9rem !important; text-align: center; margin-bottom: 0;}
       .sub {text-align: center; color: #64708a; margin: 0 0 1.5rem;}
-      div[data-testid="stMetric"] {background: #f6f8fc; border: 1px solid #e3e8f2;
+      div[data-testid="stMetric"] {background: #ffffff; border: 1px solid #dfe5f5;
           border-radius: 10px; padding: 12px 14px;}
       div[data-testid="stForm"] {border-radius: 12px;}
       .stButton > button, .stFormSubmitButton > button {border-radius: 8px; width: 100%;}
@@ -79,33 +80,95 @@ st.markdown(
 )
 
 
+def _send(email, code):
+    """Deliver the code. Returns an error string or None."""
+    try:
+        if st.secrets.get("dev_show_code", False):
+            st.session_state["dev_code"] = code
+            return None
+        smtp = dict(st.secrets["smtp"])
+    except Exception:
+        return "Email sending isn't configured yet (missing SMTP secrets)."
+    try:
+        auth.send_code_email(smtp, email, code)
+        return None
+    except Exception:
+        return "Couldn't send the email. Check the SMTP settings and try again."
+
+
+def _start(mode, email, username):
+    """Issue + send a code, then move to the code-entry step."""
+    code, err = auth.issue_code(email)
+    err = err or _send(email, code)
+    if err:
+        st.error(err)
+        return
+    st.session_state["pending"] = {"mode": mode, "email": email, "username": username}
+    st.rerun()
+
+
+def _mask(email):
+    name, domain = email.split("@", 1)
+    return f"{name[:2]}{'*' * max(len(name) - 2, 1)}@{domain}"
+
+
 def login_screen():
     st.title("🎓 Grade & Report Card Generator")
-    st.markdown('<p class="sub">Log in or create an account to continue</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub">Sign in with a one-time code sent to your email</p>',
+                unsafe_allow_html=True)
+    pending = st.session_state.get("pending")
+
+    if pending:  # step 2: enter the code
+        st.info(f"We sent a 6-digit code to **{_mask(pending['email'])}**. It expires in 10 minutes.")
+        if st.session_state.get("dev_code"):
+            st.warning(f"Test mode — your code is **{st.session_state['dev_code']}**")
+        with st.form("verify"):
+            code = st.text_input("Confirmation code", max_chars=6, placeholder="123456")
+            if st.form_submit_button("Verify & continue", type="primary"):
+                ok, msg = auth.verify_code(pending["email"], code)
+                if not ok:
+                    st.error(msg)
+                else:
+                    if pending["mode"] == "signup":
+                        try:
+                            auth.create_member(pending["email"], pending["username"])
+                        except Exception:
+                            st.error("That username or email was just taken. Please start again.")
+                            st.session_state.pop("pending")
+                            st.stop()
+                    st.session_state["user"] = pending["username"]
+                    for k in ("pending", "dev_code"):
+                        st.session_state.pop(k, None)
+                    st.rerun()
+        c1, c2 = st.columns(2)
+        if c1.button("Resend code"):
+            _start(pending["mode"], pending["email"], pending["username"])
+        if c2.button("← Back"):
+            for k in ("pending", "dev_code"):
+                st.session_state.pop(k, None)
+            st.rerun()
+        return
+
     tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
     with tab_login:
         with st.form("login"):
             ident = st.text_input("Username or email")
-            pw = st.text_input("Password", type="password")
-            if st.form_submit_button("Log in", type="primary"):
-                user = auth.authenticate(ident, pw)
-                if user:
-                    st.session_state["user"] = user
-                    st.rerun()
+            if st.form_submit_button("Send me a code", type="primary"):
+                member = auth.find_member(ident) if ident.strip() else None
+                if not member:
+                    st.error("No account found. Check the spelling or sign up first.")
                 else:
-                    st.error("Invalid username/email or password.")
+                    _start("login", member[1], member[0])
     with tab_signup:
         with st.form("signup"):
             email = st.text_input("Email")
             uname = st.text_input("Username", help="Use this for quick log in later.")
-            pw = st.text_input("Password", type="password", help="At least 6 characters.")
-            pw2 = st.text_input("Confirm password", type="password")
-            if st.form_submit_button("Create account", type="primary"):
-                if pw != pw2:
-                    st.error("Passwords do not match.")
+            if st.form_submit_button("Send me a code", type="primary"):
+                ok, msg, email_n, uname_n = auth.check_signup(email, uname)
+                if not ok:
+                    st.error(msg)
                 else:
-                    ok, msg = auth.register(email, uname, pw)
-                    (st.success if ok else st.error)(msg)
+                    _start("signup", email_n, uname_n)
 
 
 if "user" not in st.session_state:
