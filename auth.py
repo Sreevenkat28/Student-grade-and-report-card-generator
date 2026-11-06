@@ -1,4 +1,4 @@
-"""Minimal username/password auth backed by SQLite with PBKDF2-hashed passwords."""
+"""Username/email + password auth backed by SQLite with PBKDF2-hashed passwords."""
 import hashlib
 import hmac
 import os
@@ -8,14 +8,16 @@ import sqlite3
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
 ITERATIONS = 200_000
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,30}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 MIN_PASSWORD = 6
 
 
 def _conn():
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS users ("
-        "username TEXT PRIMARY KEY, salt BLOB NOT NULL, hash BLOB NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS accounts ("
+        "username TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, "
+        "salt BLOB NOT NULL, hash BLOB NOT NULL)"
     )
     return conn
 
@@ -24,9 +26,11 @@ def _hash(password: str, salt: bytes) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, ITERATIONS)
 
 
-def register(username: str, password: str):
+def register(email: str, username: str, password: str):
     """Returns (ok, message)."""
-    username = username.strip()
+    email, username = email.strip().lower(), username.strip().lower()
+    if not EMAIL_RE.match(email):
+        return False, "Enter a valid email address."
     if not USERNAME_RE.match(username):
         return False, "Username must be 3-30 characters: letters, numbers, _ . -"
     if len(password) < MIN_PASSWORD:
@@ -35,20 +39,31 @@ def register(username: str, password: str):
     try:
         with _conn() as c:
             c.execute(
-                "INSERT INTO users VALUES (?, ?, ?)",
-                (username.lower(), salt, _hash(password, salt)),
+                "INSERT INTO accounts VALUES (?, ?, ?, ?)",
+                (username, email, salt, _hash(password, salt)),
             )
     except sqlite3.IntegrityError:
-        return False, "That username is already taken."
+        with _conn() as c:
+            taken_user = c.execute(
+                "SELECT 1 FROM accounts WHERE username = ?", (username,)
+            ).fetchone()
+        return False, (
+            "That username is already taken."
+            if taken_user
+            else "An account with that email already exists."
+        )
     return True, "Account created. You can now log in."
 
 
-def authenticate(username: str, password: str) -> bool:
+def authenticate(identifier: str, password: str):
+    """identifier is a username or an email. Returns the username, or None."""
+    ident = identifier.strip().lower()
     with _conn() as c:
         row = c.execute(
-            "SELECT salt, hash FROM users WHERE username = ?", (username.strip().lower(),)
+            "SELECT username, salt, hash FROM accounts WHERE username = ? OR email = ?",
+            (ident, ident),
         ).fetchone()
     if row is None:
         _hash(password, b"\0" * 16)  # keep timing similar for unknown users
-        return False
-    return hmac.compare_digest(_hash(password, row[0]), row[1])
+        return None
+    return row[0] if hmac.compare_digest(_hash(password, row[1]), row[2]) else None

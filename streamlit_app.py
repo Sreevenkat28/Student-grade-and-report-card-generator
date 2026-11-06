@@ -61,33 +61,50 @@ def compute_result(rows):
             "grade": grade, "remark": remark, "passed": passed, "failed": failed}, None
 
 
-st.set_page_config(page_title="Grade & Report Card Generator", page_icon="🎓")
-st.title("🎓 Student Grade & Report Card Generator")
+st.set_page_config(page_title="Grade & Report Card Generator", page_icon="🎓", layout="centered")
+st.markdown(
+    """
+    <style>
+      #MainMenu, footer, header [data-testid="stToolbar"] {visibility: hidden;}
+      .block-container {padding-top: 2.5rem; max-width: 760px;}
+      h1 {font-size: 1.9rem !important; text-align: center; margin-bottom: 0;}
+      .sub {text-align: center; color: #64708a; margin: 0 0 1.5rem;}
+      div[data-testid="stMetric"] {background: #f6f8fc; border: 1px solid #e3e8f2;
+          border-radius: 10px; padding: 12px 14px;}
+      div[data-testid="stForm"] {border-radius: 12px;}
+      .stButton > button, .stFormSubmitButton > button {border-radius: 8px; width: 100%;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def login_screen():
-    st.caption("Please log in or create an account to continue.")
+    st.title("🎓 Grade & Report Card Generator")
+    st.markdown('<p class="sub">Log in or create an account to continue</p>', unsafe_allow_html=True)
     tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
     with tab_login:
         with st.form("login"):
-            u = st.text_input("Username")
-            p = st.text_input("Password", type="password")
+            ident = st.text_input("Username or email")
+            pw = st.text_input("Password", type="password")
             if st.form_submit_button("Log in", type="primary"):
-                if auth.authenticate(u, p):
-                    st.session_state["user"] = u.strip().lower()
+                user = auth.authenticate(ident, pw)
+                if user:
+                    st.session_state["user"] = user
                     st.rerun()
                 else:
-                    st.error("Invalid username or password.")
+                    st.error("Invalid username/email or password.")
     with tab_signup:
         with st.form("signup"):
-            u = st.text_input("Choose a username")
-            p = st.text_input("Choose a password", type="password")
-            p2 = st.text_input("Confirm password", type="password")
-            if st.form_submit_button("Create account"):
-                if p != p2:
+            email = st.text_input("Email")
+            uname = st.text_input("Username", help="Use this for quick log in later.")
+            pw = st.text_input("Password", type="password", help="At least 6 characters.")
+            pw2 = st.text_input("Confirm password", type="password")
+            if st.form_submit_button("Create account", type="primary"):
+                if pw != pw2:
                     st.error("Passwords do not match.")
                 else:
-                    ok, msg = auth.register(u, p)
+                    ok, msg = auth.register(email, uname, pw)
                     (st.success if ok else st.error)(msg)
 
 
@@ -95,23 +112,26 @@ if "user" not in st.session_state:
     login_screen()
     st.stop()
 
-top_l, top_r = st.columns([4, 1])
-top_l.caption(f"Logged in as **{st.session_state['user']}**")
-if top_r.button("Log out"):
+# ---- Logged-in app ----
+head_l, head_r = st.columns([3, 1], vertical_alignment="center")
+head_l.markdown(f"**👤 {st.session_state['user']}**")
+if head_r.button("Log out"):
     del st.session_state["user"]
     st.rerun()
 
-st.caption("Enter subject marks to get the percentage, grade, pass/fail status and a report card.")
+st.title("🎓 Grade & Report Card Generator")
+st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fail result</p>',
+            unsafe_allow_html=True)
 
 with st.form("student"):
+    st.markdown("##### Student details")
     c1, c2 = st.columns(2)
     name = c1.text_input("Student name")
     roll = c2.text_input("Roll / ID number")
     cls = c1.text_input("Class / Grade")
     exam = c2.text_input("Exam")
 
-    st.subheader("Subject marks")
-    st.caption("Add or delete rows in the table as needed.")
+    st.markdown("##### Subject marks")
     table = st.data_editor(
         pd.DataFrame({"Subject": DEFAULT_SUBJECTS, "Marks": [None] * 5, "Max": [100.0] * 5}),
         num_rows="dynamic", width="stretch", hide_index=True,
@@ -120,6 +140,7 @@ with st.form("student"):
             "Max": st.column_config.NumberColumn(min_value=1.0),
         },
     )
+    st.caption("Add or delete rows in the table as needed.")
     submitted = st.form_submit_button("Generate report card", type="primary")
 
 if submitted:
@@ -130,31 +151,36 @@ if submitted:
         if err:
             st.error(err)
         else:
-            st.divider()
-            st.header("REPORT CARD")
-            st.markdown(f"**{exam or 'Academic Report'}**")
-            st.write(f"**Name:** {name}  |  **Roll/ID:** {roll or '—'}  |  "
-                     f"**Class:** {cls or '—'}  |  **Date:** {date.today():%d %b %Y}")
-            df = pd.DataFrame(res["rows"])
-            st.dataframe(df, width="stretch", hide_index=True)
+            with st.container(border=True):
+                st.markdown("<h3 style='text-align:center;margin:0'>REPORT CARD</h3>"
+                            f"<p class='sub' style='margin-bottom:1rem'>{exam or 'Academic Report'}</p>",
+                            unsafe_allow_html=True)
+                d1, d2, d3, d4 = st.columns(4)
+                d1.caption("Name"); d1.write(f"**{name}**")
+                d2.caption("Roll / ID"); d2.write(roll or "—")
+                d3.caption("Class"); d3.write(cls or "—")
+                d4.caption("Date"); d4.write(f"{date.today():%d %b %Y}")
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total", f"{res['total']:g} / {res['max_total']:g}")
-            m2.metric("Percentage", f"{res['pct']}%")
-            m3.metric("Grade", res["grade"])
-            m4.metric("Result", "PASS" if res["passed"] else "FAIL")
+                df = pd.DataFrame(res["rows"])
+                st.dataframe(df, width="stretch", hide_index=True)
 
-            if res["passed"]:
-                st.success(f"Remarks: {res['remark']}")
-            else:
-                msg = f"Remarks: {res['remark']}"
-                if res["failed"]:
-                    msg += f" — Failed in: {', '.join(res['failed'])}"
-                st.error(msg)
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Total", f"{res['total']:g} / {res['max_total']:g}")
+                m2.metric("Percentage", f"{res['pct']}%")
+                m3.metric("Grade", res["grade"])
+                m4.metric("Result", "PASS" if res["passed"] else "FAIL")
 
-            st.download_button("Download marks as CSV", df.to_csv(index=False),
+                if res["passed"]:
+                    st.success(f"**Remarks:** {res['remark']}")
+                else:
+                    msg = f"**Remarks:** {res['remark']}"
+                    if res["failed"]:
+                        msg += f" — failed in {', '.join(res['failed'])}"
+                    st.error(msg)
+
+            st.download_button("Download as CSV", df.to_csv(index=False),
                                file_name=f"report_card_{name.strip().replace(' ', '_')}.csv",
                                mime="text/csv")
 
-st.caption("Pass rule: at least 40% in every subject and overall. "
-           "Grades: A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <40")
+st.caption("Pass: at least 40% in every subject and overall · "
+           "A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <40")
