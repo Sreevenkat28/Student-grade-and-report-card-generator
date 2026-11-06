@@ -1,4 +1,4 @@
-"""Passwordless auth: accounts (email + username) and emailed one-time codes.
+"""Auth: accounts (email + username + password) and emailed one-time codes (used to reset a password).
 
 Storage is a local SQLite file. Codes are stored hashed, expire after 10 minutes,
 allow 5 wrong attempts, and can be re-sent at most once every 30 seconds.
@@ -18,6 +18,10 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,30}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 CODE_TTL = 600
 MAX_ATTEMPTS = 5
+ITERATIONS = 200_000
+MIN_PASSWORD = 6
+LOGIN_MAX_FAILS = 5
+LOGIN_LOCK_SECONDS = 600
 RESEND_WAIT = 30
 
 
@@ -26,6 +30,14 @@ def _conn():
     conn.execute(
         "CREATE TABLE IF NOT EXISTS members ("
         "username TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE)"
+    )
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(members)")}
+    for col in ("salt", "hash"):  # older databases had no password columns
+        if col not in cols:
+            conn.execute(f"ALTER TABLE members ADD COLUMN {col} BLOB")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS fails ("
+        "ident TEXT PRIMARY KEY, count INTEGER NOT NULL, since REAL NOT NULL)"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS codes ("
@@ -37,6 +49,17 @@ def _conn():
 
 def _hash_code(email: str, code: str) -> str:
     return hashlib.sha256(f"{email}:{code}".encode()).hexdigest()
+
+
+def _hash_pw(password: str, salt: bytes) -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, ITERATIONS)
+
+
+def check_password(password: str):
+    """Returns an error message, or '' if the password is acceptable."""
+    if len(password) < MIN_PASSWORD:
+        return f"Password must be at least {MIN_PASSWORD} characters."
+    return ""
 
 
 def check_signup(email: str, username: str):
@@ -54,9 +77,54 @@ def check_signup(email: str, username: str):
     return True, "", email, username
 
 
-def create_member(email: str, username: str):
+def create_member(email: str, username: str, password: str):
+    salt = os.urandom(16)
     with _conn() as c:
-        c.execute("INSERT INTO members VALUES (?, ?)", (username, email))
+        c.execute(
+            "INSERT INTO members (username, email, salt, hash) VALUES (?, ?, ?, ?)",
+            (username, email, salt, _hash_pw(password, salt)),
+        )
+
+
+def set_password(email: str, password: str):
+    salt = os.urandom(16)
+    with _conn() as c:
+        c.execute(
+            "UPDATE members SET salt = ?, hash = ? WHERE email = ?",
+            (salt, _hash_pw(password, salt), email),
+        )
+        c.execute("DELETE FROM fails WHERE ident IN (SELECT username FROM members WHERE email = ?)", (email,))
+
+
+def authenticate(identifier: str, password: str):
+    """Username-or-email + password. Returns (username, error); exactly one is None."""
+    ident = identifier.strip().lower()
+    now = time.time()
+    with _conn() as c:
+        row = c.execute(
+            "SELECT username, salt, hash FROM members WHERE username = ? OR email = ?", (ident, ident)
+        ).fetchone()
+        key = row[0] if row else ident
+        f = c.execute("SELECT count, since FROM fails WHERE ident = ?", (key,)).fetchone()
+        if f and now - f[1] > LOGIN_LOCK_SECONDS:
+            c.execute("DELETE FROM fails WHERE ident = ?", (key,))
+            f = None
+        if f and f[0] >= LOGIN_MAX_FAILS:
+            mins = int((LOGIN_LOCK_SECONDS - (now - f[1])) // 60) + 1
+            return None, f"Too many failed attempts. Try again in about {mins} min, or reset your password."
+        ok = False
+        if row and row[1] and row[2]:
+            ok = hmac.compare_digest(_hash_pw(password, row[1]), row[2])
+        else:
+            _hash_pw(password, b"\0" * 16)  # similar timing for unknown users
+        if ok:
+            c.execute("DELETE FROM fails WHERE ident = ?", (key,))
+            return row[0], None
+        c.execute(
+            "INSERT INTO fails VALUES (?, 1, ?) ON CONFLICT(ident) DO UPDATE SET count = count + 1",
+            (key, now),
+        )
+    return None, "Invalid username/email or password."
 
 
 def find_member(identifier: str):

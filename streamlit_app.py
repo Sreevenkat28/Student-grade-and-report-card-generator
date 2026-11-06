@@ -132,13 +132,13 @@ def _send(email, code):
         return "Couldn't send the email. Check the SMTP settings and try again."
 
 
-def _start_login(email, username):
+def _start_reset(email, username):
     code, err = auth.issue_code(email)
     err = err or _send(email, code)
     if err:
         st.error(err)
         return
-    st.session_state["pending"] = {"email": email, "username": username}
+    st.session_state["pending"] = {"email": email, "username": username, "verified": False}
     st.rerun()
 
 
@@ -152,58 +152,87 @@ def _clear_pending():
         st.session_state.pop(k, None)
 
 
-def login_screen():
-    st.title("🎓 Grade & Report Card Generator")
-    pending = st.session_state.get("pending")
-
-    if pending:  # log in, step 2: enter the emailed code
-        st.markdown('<p class="sub">Check your email for the confirmation code</p>', unsafe_allow_html=True)
+def _reset_screen(pending):
+    """Forgot password: confirm the emailed code, then choose a new password."""
+    st.markdown('<p class="sub">Reset your password</p>', unsafe_allow_html=True)
+    if not pending["verified"]:
         st.info(f"We sent a 6-digit code to **{_mask(pending['email'])}**. It expires in 10 minutes.")
         if st.session_state.get("dev_code"):
             st.warning(f"Test mode — your code is **{st.session_state['dev_code']}**")
         with st.form("verify"):
             code = st.text_input("Confirmation code", max_chars=6, placeholder="123456")
-            if st.form_submit_button("Verify & log in", type="primary", width="stretch"):
+            if st.form_submit_button("Verify code", type="primary", width="stretch"):
                 ok, msg = auth.verify_code(pending["email"], code)
                 if ok:
-                    st.session_state["user"] = pending["username"]
-                    _clear_pending()
+                    pending["verified"] = True
                     st.rerun()
                 else:
                     st.error(msg)
         c1, c2 = st.columns(2)
         if c1.button("Resend code", width="stretch"):
-            _start_login(pending["email"], pending["username"])
+            _start_reset(pending["email"], pending["username"])
         if c2.button("← Back", width="stretch"):
             _clear_pending()
             st.rerun()
+    else:
+        st.success("Code confirmed. Choose a new password.")
+        with st.form("newpw"):
+            pw = st.text_input("New password", type="password", help="At least 6 characters.")
+            pw2 = st.text_input("Confirm new password", type="password")
+            if st.form_submit_button("Save password & log in", type="primary", width="stretch"):
+                err = auth.check_password(pw) or ("Passwords do not match." if pw != pw2 else "")
+                if err:
+                    st.error(err)
+                else:
+                    auth.set_password(pending["email"], pw)
+                    st.session_state["user"] = pending["username"]
+                    _clear_pending()
+                    st.rerun()
+
+
+def login_screen():
+    st.title("🎓 Grade & Report Card Generator")
+    pending = st.session_state.get("pending")
+    if pending:
+        _reset_screen(pending)
         return
 
-    st.markdown('<p class="sub">Create an account in seconds, or log in with an emailed code</p>',
-                unsafe_allow_html=True)
+    st.markdown('<p class="sub">Create an account in seconds, or log in</p>', unsafe_allow_html=True)
     tab_signup, tab_login = st.tabs(["✨ Sign up", "🔑 Log in"])
     with tab_signup:
         with st.form("signup"):
             email = st.text_input("Email")
             uname = st.text_input("Username", help="Use this for quick log in later.")
+            pw = st.text_input("Password", type="password", help="At least 6 characters.", key="su_pw")
+            pw2 = st.text_input("Confirm password", type="password", key="su_pw2")
             if st.form_submit_button("Create my account", type="primary", width="stretch"):
                 ok, msg, email_n, uname_n = auth.check_signup(email, uname)
-                if not ok:
-                    st.error(msg)
+                err = msg if not ok else (auth.check_password(pw) or ("Passwords do not match." if pw != pw2 else ""))
+                if err:
+                    st.error(err)
                 else:
-                    auth.create_member(email_n, uname_n)  # signed up -> straight in
+                    auth.create_member(email_n, uname_n, pw)  # signed up -> straight in
                     st.session_state["user"] = uname_n
-                    st.session_state["just_signed_up"] = True
                     st.rerun()
     with tab_login:
         with st.form("login"):
             ident = st.text_input("Username or email")
-            if st.form_submit_button("Send me a code", type="primary", width="stretch"):
-                member = auth.find_member(ident) if ident.strip() else None
-                if not member:
-                    st.error("No account found. Check the spelling or sign up first.")
+            pw = st.text_input("Password", type="password", key="li_pw")
+            if st.form_submit_button("Log in", type="primary", width="stretch"):
+                u, err = auth.authenticate(ident, pw)
+                if u:
+                    st.session_state["user"] = u
+                    st.rerun()
                 else:
-                    _start_login(member[1], member[0])
+                    st.error(err)
+        with st.expander("Forgot password?"):
+            fid = st.text_input("Username or email", key="fp_id")
+            if st.button("Email me a reset code", width="stretch"):
+                member = auth.find_member(fid) if fid.strip() else None
+                if not member:
+                    st.error("No account found with that username or email.")
+                else:
+                    _start_reset(member[1], member[0])
 
 
 if "user" not in st.session_state:
