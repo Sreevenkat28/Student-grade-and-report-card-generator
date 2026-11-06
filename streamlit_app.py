@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import classes_db as cdb
 
 PASS_PERCENT = 40
 GRADE_SCALE = [
@@ -61,25 +62,60 @@ def compute_result(rows):
             "grade": grade, "remark": remark, "passed": passed, "failed": failed}, None
 
 
+# --------------------------------------------------------------------------- page + style
 st.set_page_config(page_title="Grade & Report Card Generator", page_icon="🎓", layout="centered")
 st.markdown(
     """
     <style>
-      #MainMenu, footer, header [data-testid="stToolbar"] {visibility: hidden;}
-      .stApp {background: linear-gradient(180deg, #eef2ff 0%, #f5f7fb 40%);}
-      .block-container {padding-top: 2.5rem; max-width: 760px;}
-      h1 {font-size: 1.9rem !important; text-align: center; margin-bottom: 0;}
-      .sub {text-align: center; color: #64708a; margin: 0 0 1.5rem;}
-      div[data-testid="stMetric"] {background: #ffffff; border: 1px solid #dfe5f5;
-          border-radius: 10px; padding: 12px 14px;}
-      div[data-testid="stForm"] {border-radius: 12px;}
-      .stButton > button, .stFormSubmitButton > button {border-radius: 8px; width: 100%;}
+      /* Works in both light and dark: only translucent colors, text inherits from the theme. */
+      footer {visibility: hidden;}
+      .stApp {
+        background-image:
+          radial-gradient(900px 420px at 0% -5%, rgba(124,77,255,.22), transparent 70%),
+          radial-gradient(800px 420px at 100% 0%, rgba(255,77,157,.18), transparent 70%);
+      }
+      .block-container {padding-top: 2.2rem; max-width: 780px;}
+      h1 {font-size: 2rem !important; text-align: center; margin-bottom: 0;
+          background: linear-gradient(90deg, #7c4dff, #ff4d9d); -webkit-background-clip: text;
+          background-clip: text; -webkit-text-fill-color: transparent;}
+      .sub {text-align: center; opacity: .75; margin: 0 0 1.4rem;}
+
+      /* Buttons: bold, high-contrast, obviously clickable */
+      button[data-testid^="stBaseButton-primary"] {
+        background: linear-gradient(90deg, #7c4dff, #ff4d9d) !important;
+        color: #fff !important; border: 0 !important; font-weight: 700 !important;
+        padding: .65rem 1.2rem !important; box-shadow: 0 4px 14px rgba(124,77,255,.45);
+        cursor: pointer; transition: transform .12s ease, box-shadow .12s ease, filter .12s;
+      }
+      button[data-testid^="stBaseButton-secondary"] {
+        border: 2px solid #7c4dff !important; font-weight: 600 !important;
+        padding: .55rem 1.1rem !important; cursor: pointer;
+        transition: transform .12s ease, background .12s ease, box-shadow .12s ease;
+      }
+      button[data-testid^="stBaseButton-primary"]:hover {
+        transform: translateY(-2px); filter: brightness(1.08);
+        box-shadow: 0 8px 20px rgba(124,77,255,.55);
+      }
+      button[data-testid^="stBaseButton-secondary"]:hover {
+        background: rgba(124,77,255,.16) !important; transform: translateY(-2px);
+        box-shadow: 0 6px 14px rgba(124,77,255,.3);
+      }
+      button[data-testid^="stBaseButton"]:active {transform: translateY(0) scale(.98);}
+      button[data-testid^="stBaseButton"]:focus-visible {outline: 3px solid #ffb300 !important;}
+
+      div[data-testid="stMetric"] {background: rgba(124,77,255,.10); border: 1px solid rgba(124,77,255,.35);
+          border-radius: 12px; padding: 12px 14px;}
+      div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 14px;}
+      button[role="tab"] {font-weight: 600; font-size: 1.02rem;}
+      .chip {display:inline-block; padding:.25rem .7rem; border-radius:999px; font-weight:600;
+             background: rgba(124,77,255,.18); border:1px solid rgba(124,77,255,.4); margin:.15rem .2rem 0 0;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 
+# --------------------------------------------------------------------------- login
 def _send(email, code):
     """Deliver the code. Returns an error string or None."""
     try:
@@ -96,14 +132,13 @@ def _send(email, code):
         return "Couldn't send the email. Check the SMTP settings and try again."
 
 
-def _start(mode, email, username):
-    """Issue + send a code, then move to the code-entry step."""
+def _start_login(email, username):
     code, err = auth.issue_code(email)
     err = err or _send(email, code)
     if err:
         st.error(err)
         return
-    st.session_state["pending"] = {"mode": mode, "email": email, "username": username}
+    st.session_state["pending"] = {"email": email, "username": username}
     st.rerun()
 
 
@@ -112,73 +147,96 @@ def _mask(email):
     return f"{name[:2]}{'*' * max(len(name) - 2, 1)}@{domain}"
 
 
+def _clear_pending():
+    for k in ("pending", "dev_code"):
+        st.session_state.pop(k, None)
+
+
 def login_screen():
     st.title("🎓 Grade & Report Card Generator")
-    st.markdown('<p class="sub">Sign in with a one-time code sent to your email</p>',
-                unsafe_allow_html=True)
     pending = st.session_state.get("pending")
 
-    if pending:  # step 2: enter the code
+    if pending:  # log in, step 2: enter the emailed code
+        st.markdown('<p class="sub">Check your email for the confirmation code</p>', unsafe_allow_html=True)
         st.info(f"We sent a 6-digit code to **{_mask(pending['email'])}**. It expires in 10 minutes.")
         if st.session_state.get("dev_code"):
             st.warning(f"Test mode — your code is **{st.session_state['dev_code']}**")
         with st.form("verify"):
             code = st.text_input("Confirmation code", max_chars=6, placeholder="123456")
-            if st.form_submit_button("Verify & continue", type="primary"):
+            if st.form_submit_button("Verify & log in", type="primary", width="stretch"):
                 ok, msg = auth.verify_code(pending["email"], code)
-                if not ok:
-                    st.error(msg)
-                else:
-                    if pending["mode"] == "signup":
-                        try:
-                            auth.create_member(pending["email"], pending["username"])
-                        except Exception:
-                            st.error("That username or email was just taken. Please start again.")
-                            st.session_state.pop("pending")
-                            st.stop()
+                if ok:
                     st.session_state["user"] = pending["username"]
-                    for k in ("pending", "dev_code"):
-                        st.session_state.pop(k, None)
+                    _clear_pending()
                     st.rerun()
+                else:
+                    st.error(msg)
         c1, c2 = st.columns(2)
-        if c1.button("Resend code"):
-            _start(pending["mode"], pending["email"], pending["username"])
-        if c2.button("← Back"):
-            for k in ("pending", "dev_code"):
-                st.session_state.pop(k, None)
+        if c1.button("Resend code", width="stretch"):
+            _start_login(pending["email"], pending["username"])
+        if c2.button("← Back", width="stretch"):
+            _clear_pending()
             st.rerun()
         return
 
-    tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
-    with tab_login:
-        with st.form("login"):
-            ident = st.text_input("Username or email")
-            if st.form_submit_button("Send me a code", type="primary"):
-                member = auth.find_member(ident) if ident.strip() else None
-                if not member:
-                    st.error("No account found. Check the spelling or sign up first.")
-                else:
-                    _start("login", member[1], member[0])
+    st.markdown('<p class="sub">Create an account in seconds, or log in with an emailed code</p>',
+                unsafe_allow_html=True)
+    tab_signup, tab_login = st.tabs(["✨ Sign up", "🔑 Log in"])
     with tab_signup:
         with st.form("signup"):
             email = st.text_input("Email")
             uname = st.text_input("Username", help="Use this for quick log in later.")
-            if st.form_submit_button("Send me a code", type="primary"):
+            if st.form_submit_button("Create my account", type="primary", width="stretch"):
                 ok, msg, email_n, uname_n = auth.check_signup(email, uname)
                 if not ok:
                     st.error(msg)
                 else:
-                    _start("signup", email_n, uname_n)
+                    auth.create_member(email_n, uname_n)  # signed up -> straight in
+                    st.session_state["user"] = uname_n
+                    st.session_state["just_signed_up"] = True
+                    st.rerun()
+    with tab_login:
+        with st.form("login"):
+            ident = st.text_input("Username or email")
+            if st.form_submit_button("Send me a code", type="primary", width="stretch"):
+                member = auth.find_member(ident) if ident.strip() else None
+                if not member:
+                    st.error("No account found. Check the spelling or sign up first.")
+                else:
+                    _start_login(member[1], member[0])
 
 
 if "user" not in st.session_state:
     login_screen()
     st.stop()
 
-# ---- Logged-in app ----
+user = st.session_state["user"]
+
+# --------------------------------------------------------------------------- onboarding
+if not cdb.is_onboarded(user):
+    st.title("🎓 Welcome!")
+    st.markdown('<p class="sub">Tell us about your classes. You can change these any time.</p>',
+                unsafe_allow_html=True)
+    with st.form("onboarding"):
+        cur = st.text_area("📘 What classes are you taking right now?",
+                           placeholder="One per line or separated by commas", height=120)
+        prev = st.text_area("📗 Any previous classes you've already completed? (optional)",
+                            placeholder="One per line or separated by commas", height=120)
+        go = st.form_submit_button("Save & continue", type="primary", width="stretch")
+    skip = st.button("Skip for now", width="stretch")
+    if go or skip:
+        if go:
+            cdb.add_classes(user, cdb.parse_names(cur), "current")
+            cdb.add_classes(user, cdb.parse_names(prev), "previous")
+        cdb.mark_onboarded(user)
+        st.session_state.pop("just_signed_up", None)
+        st.rerun()
+    st.stop()
+
+# --------------------------------------------------------------------------- main app
 head_l, head_r = st.columns([3, 1], vertical_alignment="center")
-head_l.markdown(f"**👤 {st.session_state['user']}**")
-if head_r.button("Log out"):
+head_l.markdown(f"**👤 {user}**")
+if head_r.button("Log out", width="stretch"):
     del st.session_state["user"]
     st.rerun()
 
@@ -186,64 +244,118 @@ st.title("🎓 Grade & Report Card Generator")
 st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fail result</p>',
             unsafe_allow_html=True)
 
-with st.form("student"):
-    st.markdown("##### Student details")
-    c1, c2 = st.columns(2)
-    name = c1.text_input("Student name")
-    roll = c2.text_input("Roll / ID number")
-    cls = c1.text_input("Class / Grade")
-    exam = c2.text_input("Exam")
+tab_report, tab_classes = st.tabs(["📝 Report card", "📚 My classes"])
+my = cdb.list_classes(user)
 
-    st.markdown("##### Subject marks")
-    table = st.data_editor(
-        pd.DataFrame({"Subject": DEFAULT_SUBJECTS, "Marks": [None] * 5, "Max": [100.0] * 5}),
-        num_rows="dynamic", width="stretch", hide_index=True,
-        column_config={
-            "Marks": st.column_config.NumberColumn(min_value=0.0),
-            "Max": st.column_config.NumberColumn(min_value=1.0),
-        },
-    )
-    st.caption("Add or delete rows in the table as needed.")
-    submitted = st.form_submit_button("Generate report card", type="primary")
+# ---- Report card tab
+with tab_report:
+    with st.form("student"):
+        st.markdown("##### Student details")
+        c1, c2 = st.columns(2)
+        name = c1.text_input("Student name")
+        roll = c2.text_input("Roll / ID number")
+        cls = c1.text_input("Class / Grade")
+        exam = c2.text_input("Exam")
 
-if submitted:
-    if not name.strip():
-        st.error("Please enter the student's name.")
-    else:
-        res, err = compute_result(table.to_dict("records"))
-        if err:
-            st.error(err)
+        st.markdown("##### Subject marks")
+        subjects = my["current"] or DEFAULT_SUBJECTS
+        if my["current"]:
+            st.caption("Pre-filled from your current classes. Add or delete rows as needed.")
         else:
-            with st.container(border=True):
-                st.markdown("<h3 style='text-align:center;margin:0'>REPORT CARD</h3>"
-                            f"<p class='sub' style='margin-bottom:1rem'>{exam or 'Academic Report'}</p>",
-                            unsafe_allow_html=True)
-                d1, d2, d3, d4 = st.columns(4)
-                d1.caption("Name"); d1.write(f"**{name}**")
-                d2.caption("Roll / ID"); d2.write(roll or "—")
-                d3.caption("Class"); d3.write(cls or "—")
-                d4.caption("Date"); d4.write(f"{date.today():%d %b %Y}")
+            st.caption("Add or delete rows as needed. Add your classes in the My classes tab to pre-fill these.")
+        table = st.data_editor(
+            pd.DataFrame({"Subject": subjects, "Marks": [None] * len(subjects),
+                          "Max": [100.0] * len(subjects)}),
+            num_rows="dynamic", width="stretch", hide_index=True,
+            column_config={
+                "Marks": st.column_config.NumberColumn(min_value=0.0),
+                "Max": st.column_config.NumberColumn(min_value=1.0),
+            },
+        )
+        submitted = st.form_submit_button("Generate report card", type="primary", width="stretch")
 
-                df = pd.DataFrame(res["rows"])
-                st.dataframe(df, width="stretch", hide_index=True)
+    if submitted:
+        if not name.strip():
+            st.error("Please enter the student's name.")
+        else:
+            res, err = compute_result(table.to_dict("records"))
+            if err:
+                st.error(err)
+            else:
+                with st.container(border=True):
+                    st.markdown("<h3 style='text-align:center;margin:0'>REPORT CARD</h3>"
+                                f"<p class='sub' style='margin-bottom:1rem'>{exam or 'Academic Report'}</p>",
+                                unsafe_allow_html=True)
+                    d1, d2, d3, d4 = st.columns(4)
+                    d1.caption("Name"); d1.write(f"**{name}**")
+                    d2.caption("Roll / ID"); d2.write(roll or "—")
+                    d3.caption("Class"); d3.write(cls or "—")
+                    d4.caption("Date"); d4.write(f"{date.today():%d %b %Y}")
 
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Total", f"{res['total']:g} / {res['max_total']:g}")
-                m2.metric("Percentage", f"{res['pct']}%")
-                m3.metric("Grade", res["grade"])
-                m4.metric("Result", "PASS" if res["passed"] else "FAIL")
+                    df = pd.DataFrame(res["rows"])
+                    st.dataframe(df, width="stretch", hide_index=True)
 
-                if res["passed"]:
-                    st.success(f"**Remarks:** {res['remark']}")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Total", f"{res['total']:g} / {res['max_total']:g}")
+                    m2.metric("Percentage", f"{res['pct']}%")
+                    m3.metric("Grade", res["grade"])
+                    m4.metric("Result", "PASS" if res["passed"] else "FAIL")
+
+                    if res["passed"]:
+                        st.success(f"**Remarks:** {res['remark']}")
+                    else:
+                        msg = f"**Remarks:** {res['remark']}"
+                        if res["failed"]:
+                            msg += f" — failed in {', '.join(res['failed'])}"
+                        st.error(msg)
+
+                st.download_button("Download as CSV", df.to_csv(index=False),
+                                   file_name=f"report_card_{name.strip().replace(' ', '_')}.csv",
+                                   mime="text/csv", type="primary", width="stretch")
+
+    st.caption("Pass: at least 40% in every subject and overall · "
+               "A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <40")
+
+
+# ---- My classes tab
+def _move(n, status):
+    cdb.set_status(user, n, status)
+
+
+def _delete(n):
+    cdb.remove_class(user, n)
+
+
+def _class_list(title, status, empty_msg):
+    other = "previous" if status == "current" else "current"
+    move_label = "✅ Completed" if status == "current" else "↩ Current"
+    with st.container(border=True):
+        st.markdown(f"#### {title} ({len(my[status])})")
+        if not my[status]:
+            st.caption(empty_msg)
+        for n in my[status]:
+            a, b, c = st.columns([5, 3, 1], vertical_alignment="center")
+            a.markdown(f"<span class='chip'>{n}</span>", unsafe_allow_html=True)
+            b.button(move_label, key=f"mv_{status}_{n}", on_click=_move, args=(n, other),
+                     width="stretch", help=f"Move to {other} classes")
+            c.button("🗑", key=f"rm_{status}_{n}", on_click=_delete, args=(n,),
+                     width="stretch", help="Remove")
+
+
+with tab_classes:
+    _class_list("📘 Current classes", "current", "No current classes yet — add some below.")
+    _class_list("📗 Previous classes", "previous", "No previous classes yet.")
+    with st.form("add_class", clear_on_submit=True):
+        st.markdown("##### Add classes")
+        names = st.text_input("Class name(s)", placeholder="Separate several with commas")
+        where = st.radio("Add to", ["Current", "Previous"], horizontal=True)
+        if st.form_submit_button("➕ Add", type="primary", width="stretch"):
+            parsed = cdb.parse_names(names)
+            if not parsed:
+                st.error("Enter at least one class name.")
+            else:
+                n = cdb.add_classes(user, parsed, where.lower())
+                if n == 0:
+                    st.warning("Those classes are already in your lists.")
                 else:
-                    msg = f"**Remarks:** {res['remark']}"
-                    if res["failed"]:
-                        msg += f" — failed in {', '.join(res['failed'])}"
-                    st.error(msg)
-
-            st.download_button("Download as CSV", df.to_csv(index=False),
-                               file_name=f"report_card_{name.strip().replace(' ', '_')}.csv",
-                               mime="text/csv")
-
-st.caption("Pass: at least 40% in every subject and overall · "
-           "A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <40")
+                    st.rerun()
