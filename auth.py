@@ -195,3 +195,48 @@ def send_code_email(smtp: dict, to_email: str, code: str):
     with server:
         server.login(smtp["user"], smtp["password"])
         server.send_message(msg)
+
+
+# ---------------------------------------------------------------- admin (this device only)
+ADMIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".admin_device")
+
+
+def is_admin(username: str) -> bool:
+    """True only if this machine has a local `.admin_device` file naming `username`.
+
+    The file is git-ignored, so it never exists on the deployed (Streamlit Cloud) copy:
+    admin access is possible only on the device where the file was created.
+    """
+    try:
+        with open(ADMIN_FILE) as f:
+            return bool(username) and f.read().strip().lower() == username.strip().lower()
+    except OSError:
+        return False
+
+
+def list_members():
+    with _conn() as c:
+        return c.execute("SELECT username, email FROM members ORDER BY username").fetchall()
+
+
+def delete_member(username: str):
+    """Remove an account and everything tied to it."""
+    with _conn() as c:
+        row = c.execute("SELECT email FROM members WHERE username = ?", (username,)).fetchone()
+        c.execute("DELETE FROM members WHERE username = ?", (username,))
+        c.execute("DELETE FROM fails WHERE ident = ?", (username,))
+        if row:
+            c.execute("DELETE FROM codes WHERE email = ?", (row[0],))
+        for table in ("classes", "profile"):  # created by classes_db on first use
+            try:
+                c.execute(f"DELETE FROM {table} WHERE username = ?", (username,))
+            except sqlite3.OperationalError:
+                pass
+
+
+def delete_all_members(keep: str = ""):
+    """Delete every account except `keep`. Returns how many were removed."""
+    names = [u for (u, _e) in list_members() if u != keep.strip().lower()]
+    for u in names:
+        delete_member(u)
+    return len(names)

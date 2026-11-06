@@ -11,3 +11,6 @@ Student Grade & Report Card Generator. Enter subject marks and get the percentag
 
 Pass rule: at least 40% in every subject and overall.
 Grades: A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <40
+
+## Admin (this device only)
+Run `python3 make_admin.py` on your own computer to make an account the admin. It writes a git-ignored `.admin_device` file; with `streamlit run streamlit_app.py` that account then gets an **Admin** tab (list accounts, delete one, delete all others). The deployed app never has this file, so nobody online can be an admin.

@@ -273,7 +273,11 @@ st.title("🎓 Grade & Report Card Generator")
 st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fail result</p>',
             unsafe_allow_html=True)
 
-tab_report, tab_classes = st.tabs(["📝 Report card", "📚 My classes"])
+IS_ADMIN = auth.is_admin(user)
+if IS_ADMIN:
+    tab_report, tab_classes, tab_admin = st.tabs(["📝 Report card", "📚 My classes", "🛠 Admin"])
+else:
+    tab_report, tab_classes = st.tabs(["📝 Report card", "📚 My classes"])
 my = cdb.list_classes(user)
 
 # ---- Report card tab
@@ -388,3 +392,29 @@ with tab_classes:
                     st.warning("Those classes are already in your lists.")
                 else:
                     st.rerun()
+
+
+# ---- Admin tab (only on the admin's own device)
+if IS_ADMIN:
+    with tab_admin:
+        members = auth.list_members()
+        st.markdown(f"#### Accounts ({len(members)})")
+        st.dataframe(pd.DataFrame(members, columns=["Username", "Email"]),
+                     width="stretch", hide_index=True)
+        others = [u for (u, _e) in members if u != user]
+        with st.container(border=True):
+            st.markdown("##### Delete one account")
+            target = st.selectbox("Account", others, index=None, placeholder="Choose an account")
+            if st.button("Delete this account", disabled=target is None):
+                auth.delete_member(target)
+                st.rerun()
+        with st.container(border=True):
+            st.markdown("##### Delete ALL other accounts")
+            st.caption("Removes every account and its classes except yours. This cannot be undone.")
+            confirm = st.text_input("Type DELETE to confirm", key="wipe_confirm")
+            if st.button("Delete all other accounts", type="primary",
+                         disabled=confirm != "DELETE" or not others):
+                n = auth.delete_all_members(keep=user)
+                st.session_state.pop("wipe_confirm", None)
+                st.toast(f"Deleted {n} account(s).")
+                st.rerun()
