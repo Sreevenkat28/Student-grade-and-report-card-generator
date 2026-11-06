@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Student Grade &amp; Report Card Generator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header no-print">
+    <h1>Student Grade &amp; Report Card Generator</h1>
+    <p>Enter subject marks to get the percentage, grade, pass/fail status and a printable report card.</p>
+  </header>
+
+  <main>
+    <form id="form" class="card no-print" novalidate>
+      <h2>Student details</h2>
+      <div class="grid">
+        <label>Student name
+          <input id="studentName" required placeholder="e.g. Aarav Sharma" />
+        </label>
+        <label>Roll / ID number
+          <input id="rollNo" placeholder="e.g. 2026-014" />
+        </label>
+        <label>Class / Grade
+          <input id="className" placeholder="e.g. 10-B" />
+        </label>
+        <label>Exam
+          <input id="examName" placeholder="e.g. Final Term 2026" />
+        </label>
+      </div>
+
+      <h2>Subject marks</h2>
+      <div class="subjects-head">
+        <span>Subject</span><span>Marks obtained</span><span>Max marks</span><span></span>
+      </div>
+      <div id="subjects"></div>
+
+      <div class="actions">
+        <button type="button" id="addSubject" class="secondary">+ Add subject</button>
+        <button type="button" id="sample" class="secondary">Fill sample data</button>
+        <button type="button" id="reset" class="secondary">Clear</button>
+        <button type="submit" class="primary">Generate report card</button>
+      </div>
+      <p id="error" class="error" role="alert" hidden></p>
+    </form>
+
+    <section id="report" class="report" hidden aria-live="polite"></section>
+  </main>
+
+  <footer class="no-print">
+    Pass rule: at least <strong>40%</strong> in every subject and overall.
+    Grades: A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F &lt;40
+  </footer>
+
+  <script src="grading.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
