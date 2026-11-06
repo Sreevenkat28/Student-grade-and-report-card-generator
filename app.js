@@ -107,14 +107,5 @@
     showError("");
     reportEl.hidden = true;
   };
-  $("sample").onclick = () => {
-    $("studentName").value = "Aarav Sharma";
-    $("rollNo").value = "2026-014";
-    $("className").value = "10-B";
-    $("examName").value = "Final Term 2026";
-    subjectsEl.innerHTML = "";
-    [88, 92, 79, 74, 95].forEach((m, i) => addRow(DEFAULT_SUBJECTS[i], m));
-  };
-
   resetRows();
 })();

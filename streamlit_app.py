@@ -4,6 +4,8 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+import auth
+
 PASS_PERCENT = 40
 GRADE_SCALE = [
     (90, "A+", "Outstanding"),
@@ -61,14 +63,52 @@ def compute_result(rows):
 
 st.set_page_config(page_title="Grade & Report Card Generator", page_icon="🎓")
 st.title("🎓 Student Grade & Report Card Generator")
+
+
+def login_screen():
+    st.caption("Please log in or create an account to continue.")
+    tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
+    with tab_login:
+        with st.form("login"):
+            u = st.text_input("Username")
+            p = st.text_input("Password", type="password")
+            if st.form_submit_button("Log in", type="primary"):
+                if auth.authenticate(u, p):
+                    st.session_state["user"] = u.strip().lower()
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+    with tab_signup:
+        with st.form("signup"):
+            u = st.text_input("Choose a username")
+            p = st.text_input("Choose a password", type="password")
+            p2 = st.text_input("Confirm password", type="password")
+            if st.form_submit_button("Create account"):
+                if p != p2:
+                    st.error("Passwords do not match.")
+                else:
+                    ok, msg = auth.register(u, p)
+                    (st.success if ok else st.error)(msg)
+
+
+if "user" not in st.session_state:
+    login_screen()
+    st.stop()
+
+top_l, top_r = st.columns([4, 1])
+top_l.caption(f"Logged in as **{st.session_state['user']}**")
+if top_r.button("Log out"):
+    del st.session_state["user"]
+    st.rerun()
+
 st.caption("Enter subject marks to get the percentage, grade, pass/fail status and a report card.")
 
 with st.form("student"):
     c1, c2 = st.columns(2)
-    name = c1.text_input("Student name", placeholder="e.g. Aarav Sharma")
+    name = c1.text_input("Student name")
     roll = c2.text_input("Roll / ID number")
     cls = c1.text_input("Class / Grade")
-    exam = c2.text_input("Exam", placeholder="e.g. Final Term 2026")
+    exam = c2.text_input("Exam")
 
     st.subheader("Subject marks")
     st.caption("Add or delete rows in the table as needed.")
