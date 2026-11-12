@@ -153,25 +153,118 @@ def verify_code(email: str, code: str):
         return False, f"Incorrect code. {left} attempt(s) left."
 
 
-def send_code_email(smtp: dict, to_email: str, code: str):
-    """Send the code via SMTP. `smtp` = {host, port, user, password, from_addr(optional)}."""
+class EmailError(Exception):
+    """An email problem with a message that is safe to show to the user."""
+
+
+def smtp_config(raw: dict) -> dict:
+    """Normalise the [smtp] secrets. Raises EmailError if something is missing or invalid."""
+    raw = dict(raw or {})
+    missing = [k for k in ("host", "user", "password") if not str(raw.get(k) or "").strip()]
+    if missing:
+        raise EmailError("Email settings are incomplete. Missing: " + ", ".join(missing) + ".")
+    try:
+        port = int(raw.get("port", 587))
+    except (TypeError, ValueError):
+        raise EmailError("The email port must be a number such as 587 or 465.")
+    return {
+        "host": str(raw["host"]).strip(),
+        "port": port,
+        "user": str(raw["user"]).strip(),
+        # Google shows app passwords in groups of four with spaces; they must be removed.
+        "password": str(raw["password"]).replace(" ", ""),
+        "from_addr": str(raw.get("from_addr") or "").strip() or str(raw["user"]).strip(),
+        "starttls": bool(raw.get("starttls", True)),
+    }
+
+
+def send_email(smtp: dict, to_email: str, subject: str, body: str):
+    """Send one plain-text email. Raises EmailError with a readable reason on failure."""
+    cfg = smtp_config(smtp)
     msg = EmailMessage()
-    msg["Subject"] = f"Your login code: {code}"
-    msg["From"] = smtp.get("from_addr") or smtp["user"]
+    msg["Subject"] = subject
+    msg["From"] = cfg["from_addr"]
     msg["To"] = to_email
-    msg.set_content(
-        f"Your Grade & Report Card Generator login code is {code}.\n\n"
-        f"It expires in {CODE_TTL // 60} minutes. If you didn't request it, ignore this email."
+    msg.set_content(body)
+    try:
+        if cfg["port"] == 465:
+            server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=20)
+        else:
+            server = smtplib.SMTP(cfg["host"], cfg["port"], timeout=20)
+        with server:
+            if cfg["port"] != 465 and cfg["starttls"]:
+                server.starttls()
+            server.login(cfg["user"], cfg["password"])
+            server.send_message(msg)
+    except smtplib.SMTPAuthenticationError:
+        raise EmailError(
+            "The email server rejected the login. For Gmail, turn on 2-step verification and use "
+            "a 16-character App Password (not your normal password) as the password."
+        )
+    except smtplib.SMTPRecipientsRefused:
+        raise EmailError("The email server refused that recipient address.")
+    except smtplib.SMTPSenderRefused:
+        raise EmailError("The email server refused the sender address. Check 'user' / 'from_addr'.")
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, TimeoutError, OSError):
+        raise EmailError(f"Couldn't reach the email server {cfg['host']}:{cfg['port']}. "
+                         "Check the host and port.")
+    except smtplib.SMTPException as e:
+        raise EmailError(f"The email server returned an error ({type(e).__name__}).")
+
+
+def send_code_email(smtp: dict, to_email: str, code: str):
+    send_email(
+        smtp, to_email, f"Your password reset code: {code}",
+        f"Your Grade & Report Card Generator code is {code}.\n\n"
+        f"Enter it in the app to reset your password. It expires in {CODE_TTL // 60} minutes. "
+        "If you didn't ask for this, you can ignore this email.",
     )
-    port = int(smtp.get("port", 587))
-    if port == 465:
-        server = smtplib.SMTP_SSL(smtp["host"], port, timeout=15)
-    else:
-        server = smtplib.SMTP(smtp["host"], port, timeout=15)
-        server.starttls()
-    with server:
-        server.login(smtp["user"], smtp["password"])
-        server.send_message(msg)
+
+
+def send_test_email(smtp: dict, to_email: str):
+    send_email(
+        smtp, to_email, "Test email from Grade & Report Card Generator",
+        "This is a test. Email sending from the app is working, so password reset codes will arrive.",
+    )
+
+
+# ---------------------------------------------------------------- account changes
+def change_password(username: str, current: str, new: str, confirm: str):
+    """Returns (ok, message). Requires the current password."""
+    u, _ = authenticate(username, current)
+    if not u:
+        return False, "Your current password is incorrect."
+    err = check_password(new) or ("The new passwords do not match." if new != confirm else "")
+    if err:
+        return False, err
+    if new == current:
+        return False, "Choose a password different from your current one."
+    with _conn() as c:
+        email = c.execute("SELECT email FROM members WHERE username = ?", (u,)).fetchone()[0]
+    set_password(email, new)
+    return True, "Password changed."
+
+
+def change_email(username: str, password: str, new_email: str):
+    """Returns (ok, message). Requires the password."""
+    u, _ = authenticate(username, password)
+    if not u:
+        return False, "Your password is incorrect."
+    new_email = new_email.strip().lower()
+    if not EMAIL_RE.match(new_email):
+        return False, "Enter a valid email address."
+    try:
+        with _conn() as c:
+            c.execute("UPDATE members SET email = ? WHERE username = ?", (new_email, u))
+    except sqlite3.IntegrityError:
+        return False, "Another account already uses that email."
+    return True, "Email updated."
+
+
+def get_email(username: str):
+    with _conn() as c:
+        row = c.execute("SELECT email FROM members WHERE username = ?", (username,)).fetchone()
+    return row[0] if row else None
 
 
 # ---------------------------------------------------------------- admin (this device only)
@@ -203,7 +296,7 @@ def delete_member(username: str):
         c.execute("DELETE FROM members WHERE username = ?", (username,))
         if row:
             c.execute("DELETE FROM codes WHERE email = ?", (row[0],))
-        for table in ("classes", "profile"):  # created by classes_db on first use
+        for table in ("classes", "profile", "prefs"):  # created by classes_db on first use
             try:
                 c.execute(f"DELETE FROM {table} WHERE username = ?", (username,))
             except sqlite3.OperationalError:

@@ -4,7 +4,7 @@ Student Grade & Report Card Generator. Enter subject marks and get the percentag
 
 - **Streamlit app:** `streamlit_app.py` (run with `pip install -r requirements.txt && streamlit run streamlit_app.py`)
 - The Streamlit app: sign up with email + username + password (you're logged in right away), then log in with your username or email and password. "Forgot password?" emails a 6-digit code (valid 10 min) to reset it.
-- After sign-up it asks for your current and previous classes; the app has a Report card tab and a My classes tab.
+- After sign-up it asks for your current and previous classes. Tabs: **Report card**, **GPA** (unweighted + weighted on the standard 4.0 scale), **Grading rules** (edit grade cut-offs and pass marks), **My classes**, **Account** (change password / email, send a test email, delete account).
 - The reset email needs SMTP credentials in Streamlit Cloud -> App settings -> Secrets (see `.streamlit/secrets.toml.example`). For testing only, `dev_show_code = true` shows the code on screen instead of emailing it.
 - Accounts are stored in a local SQLite file (`users.db`), which is NOT persistent on Streamlit Community Cloud: accounts reset when the app restarts.
 - **Static web version (no login):** open `index.html` in a browser (uses `grading.js`, `app.js`, `style.css`)

@@ -1,65 +1,16 @@
 """Student Grade & Report Card Generator — Streamlit version."""
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
 
 import auth
 import classes_db as cdb
+import gpa as gpa_lib
+import grading
+import prefs_db
 
-PASS_PERCENT = 40
-GRADE_SCALE = [
-    (90, "A+", "Outstanding"),
-    (80, "A", "Excellent"),
-    (70, "B+", "Very Good"),
-    (60, "B", "Good"),
-    (50, "C", "Satisfactory"),
-    (40, "D", "Needs Improvement"),
-    (0, "F", "Fail"),
-]
 DEFAULT_SUBJECTS = ["Mathematics", "Science", "English", "Social Studies", "Computer Science"]
-
-
-def grade_for(pct):
-    for low, grade, remark in GRADE_SCALE:
-        if pct >= low:
-            return grade, remark
-
-
-def compute_result(rows):
-    """rows: list of dicts with Subject, Marks, Max. Returns (result, error)."""
-    if not rows:
-        return None, "Add at least one subject."
-    out = []
-    for r in rows:
-        name = str(r.get("Subject") or "").strip()
-        marks, mx = r.get("Marks"), r.get("Max")
-        if not name:
-            return None, "Every subject needs a name."
-        if mx is None or pd.isna(mx) or mx <= 0:
-            return None, f'Maximum marks for "{name}" must be greater than 0.'
-        if marks is None or pd.isna(marks):
-            return None, f'Enter marks for "{name}".'
-        if marks < 0:
-            return None, f'Marks for "{name}" cannot be negative.'
-        if marks > mx:
-            return None, f'Marks for "{name}" ({marks:g}) exceed the maximum ({mx:g}).'
-        pct = round(marks / mx * 100, 2)
-        out.append({
-            "Subject": name, "Marks": marks, "Max": mx, "%": pct,
-            "Grade": grade_for(pct)[0],
-            "Status": "Pass" if pct >= PASS_PERCENT else "Fail",
-        })
-    total = round(sum(o["Marks"] for o in out), 2)
-    max_total = round(sum(o["Max"] for o in out), 2)
-    pct = round(total / max_total * 100, 2)
-    failed = [o["Subject"] for o in out if o["Status"] == "Fail"]
-    passed = pct >= PASS_PERCENT and not failed
-    grade, remark = grade_for(pct)
-    if not passed:
-        remark = "Not promoted — must reappear in failed subject(s)"
-    return {"rows": out, "total": total, "max_total": max_total, "pct": pct,
-            "grade": grade, "remark": remark, "passed": passed, "failed": failed}, None
 
 
 # --------------------------------------------------------------------------- page + style
@@ -116,20 +67,42 @@ st.markdown(
 
 
 # --------------------------------------------------------------------------- login
-def _send(email, code):
-    """Deliver the code. Returns an error string or None."""
+def _dev_mode():
     try:
-        if st.secrets.get("dev_show_code", False):
-            st.session_state["dev_code"] = code
-            return None
-        smtp = dict(st.secrets["smtp"])
+        return bool(st.secrets.get("dev_show_code", False))
     except Exception:
-        return "Email sending isn't configured yet (missing SMTP secrets)."
+        return False
+
+
+def _smtp_settings():
+    """Returns (settings, error)."""
     try:
-        auth.send_code_email(smtp, email, code)
+        return dict(st.secrets["smtp"]), None
+    except Exception:
+        return None, ("Email sending isn't set up yet: the app has no [smtp] settings "
+                      "(add them under Settings -> Secrets in Streamlit).")
+
+
+def _deliver(send_fn, *args):
+    """Run an auth.send_* function with the app's SMTP settings. Returns an error string or None."""
+    smtp, err = _smtp_settings()
+    if err:
+        return err
+    try:
+        send_fn(smtp, *args)
         return None
+    except auth.EmailError as e:
+        return str(e)
     except Exception:
-        return "Couldn't send the email. Check the SMTP settings and try again."
+        return "Couldn't send the email because of an unexpected error. Check the SMTP settings."
+
+
+def _send(email, code):
+    """Deliver a reset code. Returns an error string or None."""
+    if _dev_mode():
+        st.session_state["dev_code"] = code
+        return None
+    return _deliver(auth.send_code_email, email, code)
 
 
 def _start_reset(email, username):
@@ -274,10 +247,14 @@ st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fa
             unsafe_allow_html=True)
 
 IS_ADMIN = auth.is_admin(user)
+TAB_NAMES = ["📝 Report card", "🎯 GPA", "⚙️ Grading rules", "📚 My classes", "👤 Account"]
 if IS_ADMIN:
-    tab_report, tab_classes, tab_admin = st.tabs(["📝 Report card", "📚 My classes", "🛠 Admin"])
-else:
-    tab_report, tab_classes = st.tabs(["📝 Report card", "📚 My classes"])
+    TAB_NAMES.append("🛠 Admin")
+_tabs = st.tabs(TAB_NAMES)
+tab_report, tab_gpa, tab_rules, tab_classes, tab_account = _tabs[:5]
+if IS_ADMIN:
+    tab_admin = _tabs[5]
+scale, rules = prefs_db.load(user)
 my = cdb.list_classes(user)
 
 # ---- Report card tab
@@ -311,7 +288,7 @@ with tab_report:
         if not name.strip():
             st.error("Please enter the student's name.")
         else:
-            res, err = compute_result(table.to_dict("records"))
+            res, err = grading.compute_result(table.to_dict("records"), scale, rules)
             if err:
                 st.error(err)
             else:
@@ -346,8 +323,10 @@ with tab_report:
                                    file_name=f"report_card_{name.strip().replace(' ', '_')}.csv",
                                    mime="text/csv", type="primary", width="stretch")
 
-    st.caption("Pass: at least 40% in every subject and overall · "
-               "A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <40")
+    _scale_txt = " · ".join(f"{g['grade']} ≥{g['min']:g}" for g in scale)
+    _rule_txt = (f"Pass: at least {rules['pass_subject']:g}% in every subject and {rules['pass_overall']:g}% overall"
+                 if rules["require_all"] else f"Pass: at least {rules['pass_overall']:g}% overall")
+    st.caption(f"{_rule_txt} · {_scale_txt} · change these in the Grading rules tab")
 
 
 # ---- My classes tab
@@ -392,6 +371,136 @@ with tab_classes:
                     st.warning("Those classes are already in your lists.")
                 else:
                     st.rerun()
+
+
+# ---- GPA tab
+with tab_gpa:
+    st.markdown("#### GPA calculator")
+    st.caption("Standard 4.0 scale. Weighted GPA adds +0.5 for Honors and +1.0 for AP / IB / Dual "
+               "enrollment (no bonus for an F). Leave the grade empty for courses still in progress.")
+    n = max(len(my["current"]), 4)
+    names = (my["current"] + [""] * n)[:n]
+    with st.form("gpa"):
+        gtable = st.data_editor(
+            pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n,
+                          "Level": ["Regular"] * n}),
+            num_rows="dynamic", width="stretch", hide_index=True,
+            column_config={
+                "Grade": st.column_config.SelectboxColumn(options=gpa_lib.GRADES),
+                "Credits": st.column_config.NumberColumn(min_value=0.0, step=0.5),
+                "Level": st.column_config.SelectboxColumn(options=gpa_lib.LEVELS, required=True),
+            },
+        )
+        calc = st.form_submit_button("Calculate GPA", type="primary", width="stretch")
+    if calc:
+        g, gerr = gpa_lib.compute_gpa(gtable.to_dict("records"))
+        if gerr:
+            st.error(gerr)
+        else:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Unweighted GPA", f"{g['unweighted']:.2f}")
+            m2.metric("Weighted GPA", f"{g['weighted']:.2f}")
+            m3.metric("Credits counted", f"{g['credits']:g}")
+            st.dataframe(pd.DataFrame(g["rows"]), width="stretch", hide_index=True)
+    with st.expander("Grade point scale"):
+        st.dataframe(pd.DataFrame({"Grade": list(gpa_lib.GRADE_POINTS),
+                                   "Points": list(gpa_lib.GRADE_POINTS.values())}),
+                     width="stretch", hide_index=True)
+
+
+# ---- Grading rules tab
+with tab_rules:
+    st.markdown("#### Your grading rules")
+    st.caption("These decide the grade letters and the pass/fail result on your report cards. "
+               "Edit the table, add or delete rows, then save.")
+    with st.form("rules"):
+        edited = st.data_editor(
+            pd.DataFrame({"Grade": [g["grade"] for g in scale],
+                          "Minimum %": [g["min"] for g in scale],
+                          "Remark": [g["remark"] for g in scale]}),
+            num_rows="dynamic", width="stretch", hide_index=True,
+            column_config={"Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)},
+        )
+        c1, c2 = st.columns(2)
+        ps = c1.number_input("Pass mark per subject (%)", 0.0, 100.0, float(rules["pass_subject"]), 0.5)
+        po = c2.number_input("Pass mark overall (%)", 0.0, 100.0, float(rules["pass_overall"]), 0.5)
+        req = st.checkbox("Must pass every subject to pass overall", value=rules["require_all"])
+        save_rules = st.form_submit_button("Save grading rules", type="primary", width="stretch")
+    if save_rules:
+        new_scale, serr = grading.clean_scale(
+            [{"grade": r["Grade"], "min": r["Minimum %"], "remark": r["Remark"]}
+             for r in edited.to_dict("records")])
+        new_rules, rerr = grading.clean_rules(ps, po, req)
+        if serr or rerr:
+            st.error(serr or rerr)
+        else:
+            prefs_db.save(user, new_scale, new_rules)
+            st.toast("Grading rules saved.")
+            st.rerun()
+    if st.button("Reset to defaults", width="stretch"):
+        prefs_db.reset(user)
+        st.rerun()
+    st.caption("The lowest grade must start at 0% so every score gets a grade.")
+
+
+# ---- Account tab
+with tab_account:
+    email_now = auth.get_email(user) or "—"
+    st.markdown("#### Your account")
+    a1, a2 = st.columns(2)
+    a1.caption("Username"); a1.write(f"**{user}**")
+    a2.caption("Email"); a2.write(f"**{email_now}**")
+
+    with st.container(border=True):
+        st.markdown("##### Change password")
+        with st.form("chpw", clear_on_submit=True):
+            cur = st.text_input("Current password", type="password")
+            new1 = st.text_input("New password", type="password", help="At least 6 characters.")
+            new2 = st.text_input("Confirm new password", type="password")
+            if st.form_submit_button("Change password", type="primary", width="stretch"):
+                ok, msg = auth.change_password(user, cur, new1, new2)
+                (st.success if ok else st.error)(msg)
+
+    with st.container(border=True):
+        st.markdown("##### Change email")
+        with st.form("chem", clear_on_submit=True):
+            new_email = st.text_input("New email")
+            pw_e = st.text_input("Your password", type="password", key="chem_pw")
+            if st.form_submit_button("Update email", type="primary", width="stretch"):
+                ok, msg = auth.change_email(user, pw_e, new_email)
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.rerun()
+
+    with st.container(border=True):
+        st.markdown("##### Check that emails reach you")
+        st.caption("Password reset codes are sent by email. Send yourself a test to confirm it works.")
+        if st.button("Send a test email to my address", width="stretch"):
+            now = datetime.now().timestamp()
+            if now - st.session_state.get("last_test_email", 0) < 30:
+                st.warning("Please wait a few seconds before sending another test.")
+            elif _dev_mode():
+                st.info("Test mode is on (dev_show_code), so no real email is sent.")
+            else:
+                st.session_state["last_test_email"] = now
+                err = _deliver(auth.send_test_email, email_now)
+                if err:
+                    st.error(err)
+                else:
+                    st.success(f"Test email sent to {email_now}. Check your inbox (and spam folder).")
+
+    with st.expander("Delete my account"):
+        st.warning("This permanently deletes your account, classes and grading rules.")
+        pw_d = st.text_input("Your password", type="password", key="del_pw")
+        sure = st.checkbox("I understand this cannot be undone")
+        if st.button("Delete my account permanently", disabled=not (sure and pw_d)):
+            u, _ = auth.authenticate(user, pw_d)
+            if not u:
+                st.error("Your password is incorrect.")
+            else:
+                auth.delete_member(user)
+                del st.session_state["user"]
+                st.rerun()
 
 
 # ---- Admin tab (only on the admin's own device)
