@@ -19,7 +19,6 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 CODE_TTL = 600
 MAX_ATTEMPTS = 5
 ITERATIONS = 200_000
-MIN_PASSWORD = 6
 RESEND_WAIT = 30
 
 
@@ -51,8 +50,8 @@ def _hash_pw(password: str, salt: bytes) -> bytes:
 
 def check_password(password: str):
     """Returns an error message, or '' if the password is acceptable."""
-    if len(password) < MIN_PASSWORD:
-        return f"Password must be at least {MIN_PASSWORD} characters."
+    if not password:
+        return "Enter a password."
     return ""
 
 

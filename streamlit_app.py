@@ -150,7 +150,7 @@ def _reset_screen(pending):
     else:
         st.success("Code confirmed. Choose a new password.")
         with st.form("newpw"):
-            pw = st.text_input("New password", type="password", help="At least 6 characters.")
+            pw = st.text_input("New password", type="password")
             pw2 = st.text_input("Confirm new password", type="password")
             if st.form_submit_button("Save password & log in", type="primary", width="stretch"):
                 err = auth.check_password(pw) or ("Passwords do not match." if pw != pw2 else "")
@@ -176,7 +176,7 @@ def login_screen():
         with st.form("signup"):
             email = st.text_input("Email")
             uname = st.text_input("Username", help="Use this for quick log in later.")
-            pw = st.text_input("Password", type="password", help="At least 6 characters.", key="su_pw")
+            pw = st.text_input("Password", type="password", key="su_pw")
             pw2 = st.text_input("Confirm password", type="password", key="su_pw2")
             if st.form_submit_button("Create my account", type="primary", width="stretch"):
                 ok, msg, email_n, uname_n = auth.check_signup(email, uname)
@@ -455,7 +455,7 @@ with tab_account:
         st.markdown("##### Change password")
         with st.form("chpw", clear_on_submit=True):
             cur = st.text_input("Current password", type="password")
-            new1 = st.text_input("New password", type="password", help="At least 6 characters.")
+            new1 = st.text_input("New password", type="password")
             new2 = st.text_input("Confirm new password", type="password")
             if st.form_submit_button("Change password", type="primary", width="stretch"):
                 ok, msg = auth.change_password(user, cur, new1, new2)

@@ -17,7 +17,7 @@ def main():
     member = auth.find_member(username)
     if member is None:
         email = input("Admin email: ").strip()
-        pw = getpass.getpass("Password (min 6 chars): ")
+        pw = getpass.getpass("Password: ")
         if pw != getpass.getpass("Confirm password: "):
             sys.exit("Passwords do not match.")
         ok, msg, email, username = auth.check_signup(email, username)
