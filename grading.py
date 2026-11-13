@@ -22,6 +22,15 @@ def _num(v):
     return None if math.isnan(f) or math.isinf(f) else f
 
 
+def _text(v):
+    """Cell text, with None and NaN (what an empty table cell becomes) treated as empty."""
+    if v is None:
+        return ""
+    if isinstance(v, float) and math.isnan(v):
+        return ""
+    return str(v).strip()
+
+
 def clean_scale(rows):
     """Validate a grade scale (list of dicts with grade/min/remark).
 
@@ -31,9 +40,9 @@ def clean_scale(rows):
     """
     out, names = [], set()
     for r in rows:
-        grade = str(r.get("grade") or "").strip()
+        grade = _text(r.get("grade"))
         mn = _num(r.get("min"))
-        remark = str(r.get("remark") or "").strip()
+        remark = _text(r.get("remark"))
         if not grade and mn is None and not remark:
             continue  # blank row
         if not grade:
@@ -81,7 +90,7 @@ def compute_result(rows, scale=None, rules=None):
         return None, "Add at least one subject."
     out = []
     for r in rows:
-        name = str(r.get("Subject") or "").strip()
+        name = _text(r.get("Subject"))
         marks, mx = _num(r.get("Marks")), _num(r.get("Max"))
         if not name:
             return None, "Every subject needs a name."

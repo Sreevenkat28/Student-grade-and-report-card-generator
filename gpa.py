@@ -34,6 +34,15 @@ def _num(v):
     return None if math.isnan(f) or math.isinf(f) else f
 
 
+def _text(v):
+    """Cell text, with None and NaN (what an empty table cell becomes) treated as empty."""
+    if v is None:
+        return ""
+    if isinstance(v, float) and math.isnan(v):
+        return ""
+    return str(v).strip()
+
+
 def clean_scale(rows):
     """Validate an editable GPA scale. Returns (scale, error).
 
@@ -42,7 +51,7 @@ def clean_scale(rows):
     """
     out, names = [], set()
     for r in rows:
-        grade = str(r.get("grade") or "").strip()
+        grade = _text(r.get("grade"))
         pts, mn = _num(r.get("points")), _num(r.get("min"))
         if not grade and pts is None and mn is None:
             continue  # blank row
@@ -72,7 +81,7 @@ def clean_levels(rows):
     """Validate editable course levels (name + weighted bonus). Returns (levels, error)."""
     out, names = [], set()
     for r in rows:
-        level = str(r.get("level") or "").strip()
+        level = _text(r.get("level"))
         bonus = _num(r.get("bonus"))
         if not level and bonus is None:
             continue
@@ -116,9 +125,9 @@ def compute_gpa(rows, scale=None, levels=None):
 
     used = []
     for r in rows:
-        course = str(r.get("Course") or "").strip()
+        course = _text(r.get("Course"))
         label = course or "a course"
-        grade = str(r.get("Grade") or "").strip()
+        grade = _text(r.get("Grade"))
         if grade.upper() == "NONE":
             grade = ""
         pct = _num(r.get("Percent"))
@@ -133,7 +142,7 @@ def compute_gpa(rows, scale=None, levels=None):
         credits = _num(r.get("Credits"))
         if credits is None or credits <= 0:
             return None, f"Enter credits greater than 0 for {label}."
-        level = r.get("Level") or default_level
+        level = _text(r.get("Level")) or default_level
         if level not in bonuses:
             return None, f"Unknown course level for {label}."
         base = points[grade.upper()]
