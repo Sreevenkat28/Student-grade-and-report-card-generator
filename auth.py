@@ -134,6 +134,12 @@ def issue_code(email: str):
     return code, None
 
 
+def discard_code(email: str):
+    """Forget a code that was never delivered, so the user can retry immediately."""
+    with _conn() as c:
+        c.execute("DELETE FROM codes WHERE email = ?", (email,))
+
+
 def verify_code(email: str, code: str):
     """Returns (ok, message). A correct code is single-use."""
     code = code.strip()

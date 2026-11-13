@@ -77,12 +77,21 @@ def _dev_mode():
 def _smtp_settings():
     """Returns (settings, error). Prefers [apps_script]; falls back to [smtp]."""
     try:
-        if "apps_script" in st.secrets:
-            return dict(st.secrets["apps_script"]), None
-        return dict(st.secrets["smtp"]), None
+        sections = list(st.secrets.keys())
     except Exception:
-        return None, ("Email sending isn't set up yet: the app has no [apps_script] or [smtp] settings "
-                      "(add them under Settings -> Secrets in Streamlit).")
+        return None, ("Email sending isn't set up: the app can't read any Secrets. Either none are saved, "
+                      "or the text has a formatting mistake (such as curly quotes). Re-save them under "
+                      "Settings -> Secrets, then reboot the app.")
+    try:
+        if "apps_script" in sections:
+            return dict(st.secrets["apps_script"]), None
+        if "smtp" in sections:
+            return dict(st.secrets["smtp"]), None
+    except Exception:
+        return None, "The email settings in Secrets couldn't be read. Check the formatting."
+    found = ", ".join(sections) if sections else "none"
+    return None, ("Email sending isn't set up: there is no [apps_script] or [smtp] section in the app's "
+                  f"Secrets. Sections found: {found}. Check the spelling of the header.")
 
 
 def _deliver(send_fn, *args):
@@ -112,6 +121,8 @@ def _start_pending(pending):
     code, err = auth.issue_code(pending["email"])
     err = err or _send(pending["email"], code)
     if err:
+        if code:  # the code never reached the user, so don't make them wait to retry
+            auth.discard_code(pending["email"])
         st.error(err)
         return
     st.session_state["pending"] = pending
