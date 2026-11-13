@@ -308,6 +308,7 @@ tab_report, tab_gpa, tab_rules, tab_classes, tab_account = _tabs[:5]
 if IS_ADMIN:
     tab_admin = _tabs[5]
 scale, rules = prefs_db.load(user)
+gpa_scale, gpa_levels = prefs_db.load_gpa(user)
 my = cdb.list_classes(user)
 
 # ---- Report card tab
@@ -454,28 +455,31 @@ with tab_classes:
 with tab_gpa:
     st.markdown("#### GPA calculator")
     gmode = st.radio("Enter grades as", ["Letter grades", "Percentages"], horizontal=True, key="gpa_mode")
-    st.caption("Standard 4.0 scale. Weighted GPA adds +0.5 for Honors and +1.0 for AP / IB / Dual "
-               "enrollment (no bonus for an F). Leave a grade empty for courses still in progress."
-               + (" Percentages are converted to letters first (93+ = A, 90 = A-, 87 = B+, … below 60 = F)."
-                  if gmode == "Percentages" else ""))
+    st.caption("Uses your GPA scale. Weighted GPA adds each course level's bonus (no bonus for a 0-point grade). "
+               "Leave a grade empty for courses still in progress. Change the scale, bonuses and "
+               "percentage cut-offs in the Grading rules tab."
+               + (" Percentages are converted to letters using your cut-offs." if gmode == "Percentages" else ""))
     n = max(len(my["current"]), 4)
     names = (my["current"] + [""] * n)[:n]
+    level_names = [l["level"] for l in gpa_levels]
     if gmode == "Letter grades":
-        gdf = pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n, "Level": ["Regular"] * n})
-        gcfg = {"Grade": st.column_config.SelectboxColumn(options=gpa_lib.GRADES)}
+        gdf = pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n,
+                            "Level": [level_names[0]] * n})
+        gcfg = {"Grade": st.column_config.SelectboxColumn(options=[g["grade"] for g in gpa_scale])}
     else:
-        gdf = pd.DataFrame({"Course": names, "Percent": [None] * n, "Credits": [1.0] * n, "Level": ["Regular"] * n})
+        gdf = pd.DataFrame({"Course": names, "Percent": [None] * n, "Credits": [1.0] * n,
+                            "Level": [level_names[0]] * n})
         gcfg = {"Percent": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)}
     with st.form("gpa"):
         gtable = st.data_editor(
             gdf, num_rows="dynamic", width="stretch", hide_index=True,
             column_config={**gcfg,
                            "Credits": st.column_config.NumberColumn(min_value=0.0, step=0.5),
-                           "Level": st.column_config.SelectboxColumn(options=gpa_lib.LEVELS, required=True)},
+                           "Level": st.column_config.SelectboxColumn(options=level_names, required=True)},
         )
         calc = st.form_submit_button("Calculate GPA", type="primary", width="stretch")
     if calc:
-        g, gerr = gpa_lib.compute_gpa(gtable.to_dict("records"))
+        g, gerr = gpa_lib.compute_gpa(gtable.to_dict("records"), gpa_scale, gpa_levels)
         if gerr:
             st.error(gerr)
         else:
@@ -484,10 +488,6 @@ with tab_gpa:
             m2.metric("Weighted GPA", f"{g['weighted']:.2f}")
             m3.metric("Credits counted", f"{g['credits']:g}")
             st.dataframe(pd.DataFrame(g["rows"]), width="stretch", hide_index=True)
-    with st.expander("Grade point scale"):
-        st.dataframe(pd.DataFrame({"Grade": list(gpa_lib.GRADE_POINTS),
-                                   "Points": list(gpa_lib.GRADE_POINTS.values())}),
-                     width="stretch", hide_index=True)
 
 
 # ---- Grading rules tab
@@ -523,6 +523,41 @@ with tab_rules:
         prefs_db.reset(user)
         st.rerun()
     st.caption("The lowest grade must start at 0% so every score gets a grade.")
+
+    st.divider()
+    st.markdown("#### GPA scale")
+    st.caption("Edit the points for each grade, the lowest percentage that earns it (used when you enter "
+               "percentages in the GPA tab; leave empty if it should never come from a percentage), and the "
+               "weighted-GPA bonus for each course level. One grade must start at 0%.")
+    with st.form("gpa_rules"):
+        gs = st.data_editor(
+            pd.DataFrame({"Grade": [g["grade"] for g in gpa_scale], "Points": [g["points"] for g in gpa_scale],
+                          "Minimum %": [g["min"] for g in gpa_scale]}),
+            num_rows="dynamic", width="stretch", hide_index=True, key="gs_editor",
+            column_config={"Points": st.column_config.NumberColumn(min_value=0.0, max_value=10.0, step=0.1),
+                           "Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)},
+        )
+        st.markdown("**Course levels (weighted bonus)**")
+        lv = st.data_editor(
+            pd.DataFrame({"Level": [l["level"] for l in gpa_levels], "Bonus": [l["bonus"] for l in gpa_levels]}),
+            num_rows="dynamic", width="stretch", hide_index=True, key="lv_editor",
+            column_config={"Bonus": st.column_config.NumberColumn(min_value=0.0, max_value=5.0, step=0.1)},
+        )
+        save_gpa_rules = st.form_submit_button("Save GPA scale", type="primary", width="stretch")
+    if save_gpa_rules:
+        new_gs, gerr1 = gpa_lib.clean_scale(
+            [{"grade": r["Grade"], "points": r["Points"], "min": r["Minimum %"]} for r in gs.to_dict("records")])
+        new_lv, gerr2 = gpa_lib.clean_levels(
+            [{"level": r["Level"], "bonus": r["Bonus"]} for r in lv.to_dict("records")])
+        if gerr1 or gerr2:
+            st.error(gerr1 or gerr2)
+        else:
+            prefs_db.save_gpa(user, new_gs, new_lv)
+            st.toast("GPA scale saved.")
+            st.rerun()
+    if st.button("Reset GPA scale to defaults", width="stretch"):
+        prefs_db.reset_gpa(user)
+        st.rerun()
 
 
 # ---- Account tab

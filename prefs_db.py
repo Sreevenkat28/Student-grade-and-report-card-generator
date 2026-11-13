@@ -3,6 +3,7 @@ import json
 import sqlite3
 
 from auth import DB_PATH
+import gpa as gpa_lib
 import grading
 
 DISPLAY_MODES = ["Letter grades", "Percentages", "Both"]
@@ -67,3 +68,29 @@ def save_display(username: str, mode: str):
         data = _read(username)
         data["display"] = mode
         _write(username, data)
+
+
+def load_gpa(username: str):
+    """Returns (gpa_scale, levels); the defaults if nothing valid is saved."""
+    data = _read(username)
+    scale, levels = [dict(g) for g in gpa_lib.DEFAULT_SCALE], [dict(l) for l in gpa_lib.DEFAULT_LEVELS]
+    s, err = gpa_lib.clean_scale(data.get("gpa_scale", []))
+    if not err:
+        scale = s
+    l, err = gpa_lib.clean_levels(data.get("gpa_levels", []))
+    if not err:
+        levels = l
+    return scale, levels
+
+
+def save_gpa(username: str, scale, levels):
+    data = _read(username)
+    data.update({"gpa_scale": scale, "gpa_levels": levels})
+    _write(username, data)
+
+
+def reset_gpa(username: str):
+    data = _read(username)
+    for k in ("gpa_scale", "gpa_levels"):
+        data.pop(k, None)
+    _write(username, data)
