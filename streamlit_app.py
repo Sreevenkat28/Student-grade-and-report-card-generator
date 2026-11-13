@@ -291,7 +291,8 @@ if not cdb.is_onboarded(user):
 head_l, head_r = st.columns([3, 1], vertical_alignment="center")
 head_l.markdown(f"**👤 {user}**")
 if head_r.button("Log out", width="stretch"):
-    del st.session_state["user"]
+    for _k in ("user", "last_report", "display_mode"):
+        st.session_state.pop(_k, None)
     st.rerun()
 
 st.title("🎓 Grade & Report Card Generator")
@@ -310,7 +311,55 @@ scale, rules = prefs_db.load(user)
 my = cdb.list_classes(user)
 
 # ---- Report card tab
+def _render_report(student, res, mode):
+    df = pd.DataFrame(res["rows"])
+    show_pct, show_letter = mode in ("Percentages", "Both"), mode in ("Letter grades", "Both")
+    if not show_pct:
+        df = df.drop(columns=["%"])
+    else:
+        df["%"] = df["%"].map(lambda v: f"{v:g}%")
+    if not show_letter:
+        df = df.drop(columns=["Grade"])
+    with st.container(border=True):
+        st.markdown("<h3 style='text-align:center;margin:0'>REPORT CARD</h3>"
+                    f"<p class='sub' style='margin-bottom:1rem'>{student['exam'] or 'Academic Report'}</p>",
+                    unsafe_allow_html=True)
+        d1, d2, d3, d4 = st.columns(4)
+        d1.caption("Name"); d1.write(f"**{student['name']}**")
+        d2.caption("Roll / ID"); d2.write(student["roll"] or "—")
+        d3.caption("Class"); d3.write(student["cls"] or "—")
+        d4.caption("Date"); d4.write(student["date"])
+
+        st.dataframe(df, width="stretch", hide_index=True)
+
+        metrics = [("Total", f"{res['total']:g} / {res['max_total']:g}")]
+        if show_pct:
+            metrics.append(("Percentage", f"{res['pct']}%"))
+        if show_letter:
+            metrics.append(("Grade", res["grade"]))
+        metrics.append(("Result", "PASS" if res["passed"] else "FAIL"))
+        for col, (label, value) in zip(st.columns(len(metrics)), metrics):
+            col.metric(label, value)
+
+        if res["passed"]:
+            st.success(f"**Remarks:** {res['remark']}")
+        else:
+            msg = f"**Remarks:** {res['remark']}"
+            if res["failed"]:
+                msg += f" — failed in {', '.join(res['failed'])}"
+            st.error(msg)
+    st.download_button("Download as CSV", df.to_csv(index=False),
+                       file_name=f"report_card_{student['name'].strip().replace(' ', '_')}.csv",
+                       mime="text/csv", type="primary", width="stretch")
+
+
 with tab_report:
+    _saved_mode = prefs_db.load_display(user)
+    if "display_mode" not in st.session_state:  # first visit this session: start from the saved choice
+        st.session_state["display_mode"] = _saved_mode
+    mode = st.radio("Show grades as", prefs_db.DISPLAY_MODES, horizontal=True, key="display_mode")
+    if mode != _saved_mode:
+        prefs_db.save_display(user, mode)
     with st.form("student"):
         st.markdown("##### Student details")
         c1, c2 = st.columns(2)
@@ -343,42 +392,18 @@ with tab_report:
             res, err = grading.compute_result(table.to_dict("records"), scale, rules)
             if err:
                 st.error(err)
+                st.session_state.pop("last_report", None)
             else:
-                with st.container(border=True):
-                    st.markdown("<h3 style='text-align:center;margin:0'>REPORT CARD</h3>"
-                                f"<p class='sub' style='margin-bottom:1rem'>{exam or 'Academic Report'}</p>",
-                                unsafe_allow_html=True)
-                    d1, d2, d3, d4 = st.columns(4)
-                    d1.caption("Name"); d1.write(f"**{name}**")
-                    d2.caption("Roll / ID"); d2.write(roll or "—")
-                    d3.caption("Class"); d3.write(cls or "—")
-                    d4.caption("Date"); d4.write(f"{date.today():%d %b %Y}")
+                st.session_state["last_report"] = (
+                    {"name": name, "roll": roll, "cls": cls, "exam": exam,
+                     "date": f"{date.today():%d %b %Y}"}, res)
+    if st.session_state.get("last_report"):  # kept so switching the display mode doesn't lose it
+        _render_report(*st.session_state["last_report"], mode)
 
-                    df = pd.DataFrame(res["rows"])
-                    st.dataframe(df, width="stretch", hide_index=True)
-
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Total", f"{res['total']:g} / {res['max_total']:g}")
-                    m2.metric("Percentage", f"{res['pct']}%")
-                    m3.metric("Grade", res["grade"])
-                    m4.metric("Result", "PASS" if res["passed"] else "FAIL")
-
-                    if res["passed"]:
-                        st.success(f"**Remarks:** {res['remark']}")
-                    else:
-                        msg = f"**Remarks:** {res['remark']}"
-                        if res["failed"]:
-                            msg += f" — failed in {', '.join(res['failed'])}"
-                        st.error(msg)
-
-                st.download_button("Download as CSV", df.to_csv(index=False),
-                                   file_name=f"report_card_{name.strip().replace(' ', '_')}.csv",
-                                   mime="text/csv", type="primary", width="stretch")
-
-    _scale_txt = " · ".join(f"{g['grade']} ≥{g['min']:g}" for g in scale)
+    _scale_txt = " · ".join(f"{g['grade']} ≥{g['min']:g}" for g in scale) if mode != "Percentages" else ""
     _rule_txt = (f"Pass: at least {rules['pass_subject']:g}% in every subject and {rules['pass_overall']:g}% overall"
                  if rules["require_all"] else f"Pass: at least {rules['pass_overall']:g}% overall")
-    st.caption(f"{_rule_txt} · {_scale_txt} · change these in the Grading rules tab")
+    st.caption(" · ".join(x for x in (_rule_txt, _scale_txt, "change these in the Grading rules tab") if x))
 
 
 # ---- My classes tab
@@ -428,20 +453,25 @@ with tab_classes:
 # ---- GPA tab
 with tab_gpa:
     st.markdown("#### GPA calculator")
+    gmode = st.radio("Enter grades as", ["Letter grades", "Percentages"], horizontal=True, key="gpa_mode")
     st.caption("Standard 4.0 scale. Weighted GPA adds +0.5 for Honors and +1.0 for AP / IB / Dual "
-               "enrollment (no bonus for an F). Leave the grade empty for courses still in progress.")
+               "enrollment (no bonus for an F). Leave a grade empty for courses still in progress."
+               + (" Percentages are converted to letters first (93+ = A, 90 = A-, 87 = B+, … below 60 = F)."
+                  if gmode == "Percentages" else ""))
     n = max(len(my["current"]), 4)
     names = (my["current"] + [""] * n)[:n]
+    if gmode == "Letter grades":
+        gdf = pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n, "Level": ["Regular"] * n})
+        gcfg = {"Grade": st.column_config.SelectboxColumn(options=gpa_lib.GRADES)}
+    else:
+        gdf = pd.DataFrame({"Course": names, "Percent": [None] * n, "Credits": [1.0] * n, "Level": ["Regular"] * n})
+        gcfg = {"Percent": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)}
     with st.form("gpa"):
         gtable = st.data_editor(
-            pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n,
-                          "Level": ["Regular"] * n}),
-            num_rows="dynamic", width="stretch", hide_index=True,
-            column_config={
-                "Grade": st.column_config.SelectboxColumn(options=gpa_lib.GRADES),
-                "Credits": st.column_config.NumberColumn(min_value=0.0, step=0.5),
-                "Level": st.column_config.SelectboxColumn(options=gpa_lib.LEVELS, required=True),
-            },
+            gdf, num_rows="dynamic", width="stretch", hide_index=True,
+            column_config={**gcfg,
+                           "Credits": st.column_config.NumberColumn(min_value=0.0, step=0.5),
+                           "Level": st.column_config.SelectboxColumn(options=gpa_lib.LEVELS, required=True)},
         )
         calc = st.form_submit_button("Calculate GPA", type="primary", width="stretch")
     if calc:
