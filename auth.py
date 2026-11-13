@@ -360,7 +360,7 @@ def delete_member(username: str):
         c.execute("DELETE FROM members WHERE username = ?", (username,))
         if row:
             c.execute("DELETE FROM codes WHERE email = ?", (row[0],))
-        for table in ("classes", "profile", "prefs"):  # created by classes_db on first use
+        for table in ("classes", "profile", "prefs", "grades", "files"):  # created by classes_db on first use
             try:
                 c.execute(f"DELETE FROM {table} WHERE username = ?", (username,))
             except sqlite3.OperationalError:

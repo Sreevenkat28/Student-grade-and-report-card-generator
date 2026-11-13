@@ -89,3 +89,55 @@ def is_onboarded(username: str) -> bool:
 def mark_onboarded(username: str):
     with _conn() as c:
         c.execute("INSERT OR REPLACE INTO profile VALUES (?, 1)", (username,))
+
+
+# ---------------------------------------------------------------- recorded grades
+MAX_GRADES_PER_USER = 500
+
+
+def _grades_conn():
+    conn = _conn()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS grades (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, "
+        "class TEXT NOT NULL, marks REAL NOT NULL, max REAL NOT NULL, label TEXT NOT NULL DEFAULT '', "
+        "created REAL NOT NULL)"
+    )
+    return conn
+
+
+def add_grade(username: str, class_name: str, marks, max_marks=100, label: str = ""):
+    """Record one score (e.g. a test). Returns (ok, message)."""
+    name = " ".join(str(class_name or "").split())[:MAX_NAME]
+    if not name:
+        return False, "Pick a class."
+    try:
+        marks, max_marks = float(marks), float(max_marks)
+    except (TypeError, ValueError):
+        return False, "Marks and maximum must be numbers."
+    if max_marks != max_marks or marks != marks or max_marks <= 0:
+        return False, "Maximum marks must be greater than 0."
+    if marks < 0 or marks > max_marks:
+        return False, f"Marks must be between 0 and {max_marks:g}."
+    label = " ".join(str(label or "").split())[:60]
+    import time
+    with _grades_conn() as c:
+        if c.execute("SELECT COUNT(*) FROM grades WHERE username = ?", (username,)).fetchone()[0] >= MAX_GRADES_PER_USER:
+            return False, f"You can record at most {MAX_GRADES_PER_USER} grades."
+        c.execute("INSERT INTO grades (username, class, marks, max, label, created) VALUES (?, ?, ?, ?, ?, ?)",
+                  (username, name, marks, max_marks, label, time.time()))
+    return True, "Grade recorded."
+
+
+def list_grades(username: str):
+    with _grades_conn() as c:
+        rows = c.execute(
+            "SELECT id, class, marks, max, label, created FROM grades WHERE username = ? ORDER BY created DESC, id DESC",
+            (username,),
+        ).fetchall()
+    return [{"id": r[0], "class": r[1], "marks": r[2], "max": r[3], "label": r[4],
+             "percent": round(r[2] / r[3] * 100, 2), "created": r[5]} for r in rows]
+
+
+def delete_grade(username: str, grade_id: int):
+    with _grades_conn() as c:
+        c.execute("DELETE FROM grades WHERE username = ? AND id = ?", (username, int(grade_id)))

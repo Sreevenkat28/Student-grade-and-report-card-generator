@@ -4,8 +4,13 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
+import json
+import streamlit.components.v1 as components
+
+import assistant as ai
 import auth
 import classes_db as cdb
+import files_db
 import gpa as gpa_lib
 import grading
 import prefs_db
@@ -291,7 +296,7 @@ if not cdb.is_onboarded(user):
 head_l, head_r = st.columns([3, 1], vertical_alignment="center")
 head_l.markdown(f"**👤 {user}**")
 if head_r.button("Log out", width="stretch"):
-    for _k in ("user", "last_report", "display_mode"):
+    for _k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "goto"):
         st.session_state.pop(_k, None)
     st.rerun()
 
@@ -300,13 +305,13 @@ st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fa
             unsafe_allow_html=True)
 
 IS_ADMIN = auth.is_admin(user)
-TAB_NAMES = ["📝 Report card", "🎯 GPA", "⚙️ Grading rules", "📚 My classes", "👤 Account"]
+TAB_NAMES = ["📝 Report card", "🎯 GPA", "⚙️ Grading rules", "📚 My classes", "📁 Files", "🤖 Assistant", "👤 Account"]
 if IS_ADMIN:
     TAB_NAMES.append("🛠 Admin")
 _tabs = st.tabs(TAB_NAMES)
-tab_report, tab_gpa, tab_rules, tab_classes, tab_account = _tabs[:5]
+tab_report, tab_gpa, tab_rules, tab_classes, tab_files, tab_ai, tab_account = _tabs[:7]
 if IS_ADMIN:
-    tab_admin = _tabs[5]
+    tab_admin = _tabs[7]
 scale, rules = prefs_db.load(user)
 gpa_scale, gpa_levels = prefs_db.load_gpa(user)
 my = cdb.list_classes(user)
@@ -449,6 +454,167 @@ with tab_classes:
                     st.warning("Those classes are already in your lists.")
                 else:
                     st.rerun()
+
+
+# ---- Recorded grades (My classes tab)
+with tab_classes:
+    st.markdown("#### 📈 Recorded grades")
+    st.caption("Keep your test and assignment scores here. The AI assistant uses them to find weak spots and "
+               "build a study plan.")
+    all_classes = my["current"] + my["previous"]
+    recorded = cdb.list_grades(user)
+    if not all_classes:
+        st.info("Add a class above first, then record grades for it.")
+    else:
+        with st.form("add_grade", clear_on_submit=True):
+            g1, g2, g3, g4 = st.columns([3, 2, 2, 3])
+            g_class = g1.selectbox("Class", all_classes)
+            g_marks = g2.number_input("Marks", min_value=0.0, value=None, step=0.5, placeholder="e.g. 45")
+            g_max = g3.number_input("Out of", min_value=1.0, value=100.0, step=1.0)
+            g_label = g4.text_input("Label (optional)", placeholder="Unit 3 test")
+            if st.form_submit_button("➕ Record grade", type="primary", width="stretch"):
+                if g_marks is None:
+                    st.error("Enter the marks you got.")
+                else:
+                    ok, msg = cdb.add_grade(user, g_class, g_marks, g_max, g_label)
+                    if ok:
+                        st.rerun()
+                    st.error(msg)
+    if recorded:
+        gdf2 = pd.DataFrame([{"Class": g["class"], "Label": g["label"] or "—", "Score": f"{g['marks']:g} / {g['max']:g}",
+                              "Percent": f"{g['percent']:g}%", "Date": datetime.fromtimestamp(g["created"]).strftime("%d %b %Y")}
+                             for g in recorded])
+        st.dataframe(gdf2, width="stretch", hide_index=True)
+        d1, d2 = st.columns([4, 1], vertical_alignment="bottom")
+        pick = d1.selectbox("Remove a grade", [None] + [g["id"] for g in recorded], index=0,
+                            format_func=lambda i: "Choose…" if i is None else next(
+                                f"{g['class']} · {g['label'] or 'no label'} · {g['marks']:g}/{g['max']:g}" for g in recorded if g["id"] == i))
+        if d2.button("Remove", disabled=pick is None, width="stretch"):
+            cdb.delete_grade(user, pick)
+            st.rerun()
+
+
+# ---- Files tab
+def _fmt_size(n):
+    return f"{n / 1024:.0f} KB" if n < 1024 * 1024 else f"{n / (1024 * 1024):.1f} MB"
+
+
+with tab_files:
+    st.markdown("#### 📁 My files")
+    n_files, used = files_db.usage(user)
+    st.caption(f"{n_files}/{files_db.MAX_FILES} files · {_fmt_size(used)} of {_fmt_size(files_db.MAX_TOTAL_BYTES)} used · "
+               f"up to {_fmt_size(files_db.MAX_FILE_BYTES)} per file. Store PDFs, notes, syllabi, report cards - any file type.")
+    with st.form("upload_files", clear_on_submit=True):
+        uploads = st.file_uploader("Add files", accept_multiple_files=True)
+        if st.form_submit_button("Save files", type="primary", width="stretch"):
+            if not uploads:
+                st.warning("Choose at least one file first.")
+            for up in uploads or []:
+                ok, res = files_db.add_file(user, up.name, up.getvalue())
+                (st.success if ok else st.error)(f'Saved "{files_db.safe_name(up.name)}".' if ok else res)
+    my_files = files_db.list_files(user)
+    if not my_files:
+        st.info("No files yet. Upload one above.")
+    else:
+        st.dataframe(pd.DataFrame([{"Name": f["name"], "Type": f["mime"], "Size": _fmt_size(f["size"]),
+                                    "Added": datetime.fromtimestamp(f["created"]).strftime("%d %b %Y")}
+                                   for f in my_files]), width="stretch", hide_index=True)
+        chosen = st.selectbox("Open a file", [f["id"] for f in my_files],
+                              format_func=lambda i: next(f["name"] for f in my_files if f["id"] == i))
+        got = files_db.get_file(user, chosen)
+        if got:
+            fname, fmime, fdata = got
+            b1, b2 = st.columns(2)
+            b1.download_button("⬇ Download", fdata, file_name=fname, mime=fmime, type="primary", width="stretch")
+            if b2.button("🗑 Delete this file", width="stretch"):
+                files_db.delete_file(user, chosen)
+                st.rerun()
+            if fmime.startswith("image/"):
+                st.image(fdata)
+            else:
+                with st.expander("Preview text"):
+                    txt, terr = files_db.extract_text(fname, fdata, limit=4000)
+                    st.text(txt) if txt else st.caption(terr)
+
+
+# ---- Assistant tab
+TAB_MAP = {t.split(" ", 1)[1]: t for t in TAB_NAMES if t != "🛠 Admin"}
+
+
+def _ai_settings():
+    try:
+        key = st.secrets.get("ANTHROPIC_API_KEY")
+        model = st.secrets.get("anthropic_model", ai.DEFAULT_MODEL)
+    except Exception:
+        return None, ai.DEFAULT_MODEL
+    return (str(key).strip() if key else None), (str(model).strip() or ai.DEFAULT_MODEL)
+
+
+@st.cache_resource
+def _ai_client(key):
+    return ai.make_client(key)
+
+
+with tab_ai:
+    st.markdown("#### 🤖 AI study assistant")
+    api_key, ai_model = _ai_settings()
+    if not api_key:
+        st.info("The assistant isn't switched on yet. The app owner needs to add an `ANTHROPIC_API_KEY` under "
+                "Settings → Secrets (get one at console.anthropic.com), then reboot the app.")
+    else:
+        st.caption("Ask me to record grades, work out your GPA, review your files, explain how to improve, or build a "
+                   "study plan. I can change things in the app for you, and I'll tell you what I did. Your messages, "
+                   "grades and any file I read are sent to Anthropic's Claude to answer you. "
+                   "I can't change passwords or delete accounts or files.")
+        st.session_state.setdefault("ai_msgs", [])
+        st.session_state.setdefault("ai_log", [])
+        st.session_state.setdefault("ai_usage", [0, 0])
+        for m in st.session_state["ai_log"]:
+            with st.chat_message(m["role"]):
+                for act in m.get("actions", []):
+                    st.caption(act)
+                st.markdown(m["text"])
+        if not st.session_state["ai_log"]:
+            st.markdown("**Try:**")
+            qa, qb, qc, qd = st.columns(4)
+            if qa.button("📅 Make a study plan", width="stretch"):
+                st.session_state["ai_pending"] = "Look at my classes and grades and make me a weekly study plan. Save it as a note."
+            if qb.button("📈 How can I improve?", width="stretch"):
+                st.session_state["ai_pending"] = "Based on my recorded grades, where am I weakest and how can I improve?"
+            if qc.button("🎯 My GPA", width="stretch"):
+                st.session_state["ai_pending"] = "Calculate my GPA from my recorded grades (use each class's average percent, 1 credit each)."
+            if qd.button("📁 Read my files", width="stretch"):
+                st.session_state["ai_pending"] = "List my files and summarise what's in them."
+        typed = st.chat_input("Message your assistant…", max_chars=ai.MAX_USER_CHARS)
+        prompt = typed or st.session_state.pop("ai_pending", None)
+        if prompt:
+            turns = sum(1 for m in st.session_state["ai_log"] if m["role"] == "user")
+            rate_err = ai.check_rate(user) if turns < ai.MAX_TURNS_PER_CHAT else None
+            if turns >= ai.MAX_TURNS_PER_CHAT:
+                st.warning("This chat is getting long. Press **New chat** to start fresh.")
+            elif rate_err:
+                st.error(rate_err)
+            else:
+                with st.spinner("Thinking…"):
+                    res = ai.chat_turn(_ai_client(api_key), ai_model, user, st.session_state["ai_msgs"], prompt, TAB_MAP)
+                if res["error"]:
+                    st.error(res["error"])
+                else:
+                    st.session_state["ai_log"] += [{"role": "user", "text": prompt},
+                                                   {"role": "assistant", "text": res["text"], "actions": res["actions"]}]
+                    st.session_state["ai_usage"][0] += res["usage"][0]
+                    st.session_state["ai_usage"][1] += res["usage"][1]
+                    if res["nav"]:
+                        st.session_state["goto"] = res["nav"]
+                    st.rerun()
+        if st.session_state["ai_log"]:
+            u_in, u_out = st.session_state["ai_usage"]
+            n1, n2 = st.columns([3, 1], vertical_alignment="center")
+            n1.caption(f"Model: {ai_model} · tokens used this chat: {u_in:,} in / {u_out:,} out")
+            if n2.button("New chat", width="stretch"):
+                for k in ("ai_msgs", "ai_log", "ai_usage"):
+                    st.session_state.pop(k, None)
+                st.rerun()
 
 
 # ---- GPA tab
@@ -644,3 +810,12 @@ if IS_ADMIN:
                 st.session_state.pop("wipe_confirm", None)
                 st.toast(f"Deleted {n} account(s).")
                 st.rerun()
+
+
+# ---- Let the assistant switch tabs (best effort: clicks the tab in the page)
+_goto = st.session_state.pop("goto", None)
+if _goto:
+    components.html(
+        "<script>setTimeout(function(){var t=[].slice.call(window.parent.document.querySelectorAll('button[role=\"tab\"]'))"
+        ".filter(function(b){return b.innerText.trim()===" + json.dumps(_goto) + "})[0];if(t)t.click();},350);</script>",
+        height=0)
