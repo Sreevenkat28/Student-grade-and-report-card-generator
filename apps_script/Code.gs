@@ -17,10 +17,10 @@
  *       token = "<the same SECRET value>"
  *
  * SAFETY: requests without the right SECRET are refused, and the script can only send the
- * fixed "confirmation code" / "test" emails (never custom text), at most 5 per address per hour.
+ * fixed "confirmation code" / "test" emails (never custom text), at most 30 per address per hour.
  */
 
-var MAX_PER_HOUR = 5;
+var MAX_PER_HOUR = 30;
 var APP_NAME = 'Grade & Report Card Generator';
 var EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/;
 

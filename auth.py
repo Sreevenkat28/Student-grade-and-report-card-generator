@@ -24,7 +24,7 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,30}$")
 CODE_TTL = 600
 MAX_ATTEMPTS = 5
 ITERATIONS = 200_000
-RESEND_WAIT = 30
+RESEND_WAIT = 5
 
 
 def _conn():

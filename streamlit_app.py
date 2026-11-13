@@ -68,7 +68,10 @@ st.markdown(
 
 # --------------------------------------------------------------------------- login
 def _dev_mode():
+    """Test mode (code shown on screen) applies only if no real email settings are configured."""
     try:
+        if "apps_script" in st.secrets or "smtp" in st.secrets:
+            return False
         return bool(st.secrets.get("dev_show_code", False))
     except Exception:
         return False
