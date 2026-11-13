@@ -75,11 +75,13 @@ def _dev_mode():
 
 
 def _smtp_settings():
-    """Returns (settings, error)."""
+    """Returns (settings, error). Prefers [apps_script]; falls back to [smtp]."""
     try:
+        if "apps_script" in st.secrets:
+            return dict(st.secrets["apps_script"]), None
         return dict(st.secrets["smtp"]), None
     except Exception:
-        return None, ("Email sending isn't set up yet: the app has no [smtp] settings "
+        return None, ("Email sending isn't set up yet: the app has no [apps_script] or [smtp] settings "
                       "(add them under Settings -> Secrets in Streamlit).")
 
 

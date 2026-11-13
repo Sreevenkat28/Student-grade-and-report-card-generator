@@ -5,17 +5,22 @@ allow 5 wrong attempts, and can be re-sent at most once every 30 seconds.
 """
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
 import smtplib
 import sqlite3
 import time
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
+from urllib.parse import urlparse
+
+import emailcheck
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,30}$")
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 CODE_TTL = 600
 MAX_ATTEMPTS = 5
 ITERATIONS = 200_000
@@ -58,8 +63,9 @@ def check_password(password: str):
 def check_signup(email: str, username: str):
     """Validate sign-up details. Returns (ok, message, email, username)."""
     email, username = email.strip().lower(), username.strip().lower()
-    if not EMAIL_RE.match(email):
-        return False, "Enter a valid email address.", email, username
+    bad = emailcheck.problem(email)
+    if bad:
+        return False, bad, email, username
     if not USERNAME_RE.match(username):
         return False, "Username must be 3-30 characters: letters, numbers, _ . -", email, username
     with _conn() as c:
@@ -211,19 +217,71 @@ def send_email(smtp: dict, to_email: str, subject: str, body: str):
         raise EmailError(f"The email server returned an error ({type(e).__name__}).")
 
 
-def send_code_email(smtp: dict, to_email: str, code: str):
+def script_config(raw: dict) -> dict:
+    """Normalise the [apps_script] secrets. Raises EmailError if missing or invalid."""
+    raw = dict(raw or {})
+    url, token = str(raw.get("url") or "").strip(), str(raw.get("token") or "").strip()
+    missing = [k for k, v in (("url", url), ("token", token)) if not v]
+    if missing:
+        raise EmailError("Email settings are incomplete. Missing: " + ", ".join(missing) + ".")
+    u = urlparse(url)
+    if not raw.get("allow_custom_url") and not (u.scheme == "https" and u.hostname == "script.google.com"):
+        raise EmailError("The script url must be the https://script.google.com/.../exec web app URL.")
+    return {"url": url, "token": token}
+
+
+_SCRIPT_ERRORS = {
+    "unauthorized": "The email service rejected the secret key. Make sure `token` in Secrets exactly "
+                    "matches the SECRET script property.",
+    "bad_email": "The email service says that address is invalid.",
+    "bad_code": "The email service rejected the code format.",
+    "rate_limited": "Too many emails were sent to that address recently. Please try again later.",
+}
+
+
+def send_via_script(cfg: dict, kind: str, to_email: str, code: str = ""):
+    """Ask the Google Apps Script web app to send a 'code' or 'test' email."""
+    c = script_config(cfg)
+    payload = json.dumps({"token": c["token"], "kind": kind, "to": to_email, "code": code}).encode()
+    req = urllib.request.Request(c["url"], data=payload, headers={"Content-Type": "application/json"})
+    try:
+        # Apps Script answers a POST with a redirect to the result; urllib follows it.
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        raise EmailError(f"The email script returned HTTP {e.code}. Check the deployment URL and access.")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise EmailError("Couldn't reach the email script. Check the url and your connection.")
+    try:
+        result = json.loads(raw)
+    except ValueError:
+        raise EmailError(
+            "The email script didn't return a valid reply. In Deploy settings, set 'Who has access' "
+            "to Anyone and use the /exec URL (not /dev)."
+        )
+    if not result.get("ok"):
+        err = result.get("error", "")
+        raise EmailError(_SCRIPT_ERRORS.get(err, f"The email script reported an error ({err or 'unknown'})."))
+
+
+def send_code_email(cfg: dict, to_email: str, code: str):
+    """Send a confirmation code. `cfg` is either {url, token} (Apps Script) or SMTP settings."""
+    if "url" in cfg:
+        return send_via_script(cfg, "code", to_email, code)
     send_email(
-        smtp, to_email, f"Your password reset code: {code}",
-        f"Your Grade & Report Card Generator code is {code}.\n\n"
-        f"Enter it in the app to reset your password. It expires in {CODE_TTL // 60} minutes. "
+        cfg, to_email, f"Your confirmation code: {code}",
+        f"Your Grade & Report Card Generator confirmation code is {code}.\n\n"
+        f"Enter it in the app to continue. It expires in {CODE_TTL // 60} minutes. "
         "If you didn't ask for this, you can ignore this email.",
     )
 
 
-def send_test_email(smtp: dict, to_email: str):
+def send_test_email(cfg: dict, to_email: str):
+    if "url" in cfg:
+        return send_via_script(cfg, "test", to_email)
     send_email(
-        smtp, to_email, "Test email from Grade & Report Card Generator",
-        "This is a test. Email sending from the app is working, so password reset codes will arrive.",
+        cfg, to_email, "Test email from Grade & Report Card Generator",
+        "This is a test. Email sending from the app is working, so confirmation codes will arrive.",
     )
 
 
@@ -250,8 +308,9 @@ def change_email(username: str, password: str, new_email: str):
     if not u:
         return False, "Your password is incorrect."
     new_email = new_email.strip().lower()
-    if not EMAIL_RE.match(new_email):
-        return False, "Enter a valid email address."
+    bad = emailcheck.problem(new_email)
+    if bad:
+        return False, bad
     try:
         with _conn() as c:
             c.execute("UPDATE members SET email = ? WHERE username = ?", (new_email, u))
