@@ -94,3 +94,23 @@ def reset_gpa(username: str):
     for k in ("gpa_scale", "gpa_levels"):
         data.pop(k, None)
     _write(username, data)
+
+
+# ---------------------------------------------------------------- interface / animation settings
+UI_KEYS = ["animations", "transitions", "click_fx", "hover_fx", "typing_fx", "cards_fx"]
+UI_DEFAULTS = {k: True for k in UI_KEYS}
+UI_LABELS = {"animations": "Animations (master switch)", "transitions": "Smooth tab transitions",
+             "click_fx": "Click & press effects", "hover_fx": "Hover lift effects",
+             "typing_fx": "Typing effect in the assistant", "cards_fx": "Fade-in cards & results"}
+
+
+def load_ui(username: str) -> dict:
+    saved = _read(username).get("ui", {})
+    saved = saved if isinstance(saved, dict) else {}
+    return {k: bool(saved.get(k, UI_DEFAULTS[k])) for k in UI_KEYS}
+
+
+def save_ui(username: str, ui: dict):
+    data = _read(username)
+    data["ui"] = {k: bool(ui.get(k, UI_DEFAULTS[k])) for k in UI_KEYS}
+    _write(username, data)

@@ -4,7 +4,10 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
+import html
 import json
+import re
+import time
 import streamlit.components.v1 as components
 
 import assistant as ai
@@ -66,10 +69,90 @@ st.markdown(
       button[role="tab"] {font-weight: 600; font-size: 1.02rem;}
       .chip {display:inline-block; padding:.25rem .7rem; border-radius:999px; font-weight:600;
              background: rgba(124,77,255,.18); border:1px solid rgba(124,77,255,.4); margin:.15rem .2rem 0 0;}
+
+      /* Assistant: modern chat look */
+      .ai-hero {display:flex; gap:.9rem; align-items:center; padding:1rem 1.2rem; border-radius:18px; margin:.2rem 0 1rem;
+                color:#fff; background: linear-gradient(120deg,#7c4dff,#ff4d9d,#7c4dff); background-size: 220% 220%;
+                box-shadow: 0 8px 24px rgba(124,77,255,.35);}
+      .ai-hero .orb {font-size:1.8rem; width:2.8rem; height:2.8rem; border-radius:50%; display:flex; align-items:center;
+                     justify-content:center; background:rgba(255,255,255,.22); flex:none;}
+      .ai-hero b {font-size:1.15rem;} .ai-hero span {opacity:.92; font-size:.92rem;}
+      [data-testid="stChatMessage"] {border-radius:18px; padding:.85rem 1.05rem; margin-bottom:.65rem;
+          border:1px solid rgba(124,77,255,.28); background: rgba(124,77,255,.07);}
+      [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+          background: rgba(255,77,157,.08); border-color: rgba(255,77,157,.32);}
+      [data-testid="stChatMessage"] table {font-size:.92rem;}
+      [data-testid="stChatInput"] {border-radius:16px;}
+      .act {display:inline-block; font-size:.8rem; padding:.12rem .6rem; border-radius:999px; margin:0 .3rem .35rem 0;
+            background: rgba(46,160,67,.14); border:1px solid rgba(46,160,67,.4);}
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+UI_KEYS = prefs_db.UI_KEYS
+
+
+def _motion_css(ui):
+    """Animation CSS built from the user's toggles. Empty when animations are off."""
+    reduced = "@media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important;}}"
+    if not ui.get("animations", True):
+        return reduced
+    css = ["@keyframes aiShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}"
+           ".ai-hero{animation: aiShift 9s ease infinite;} .ai-hero .orb{animation: orbPulse 2.6s ease-in-out infinite;}"
+           "@keyframes orbPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.09)}}"]
+    if ui.get("transitions", True):
+        css.append("div[data-baseweb='tab-panel']{animation: tabIn .38s cubic-bezier(.2,.8,.2,1) both;}"
+                   "@keyframes tabIn{from{opacity:0;transform:translateY(12px) scale(.995)}to{opacity:1;transform:none}}"
+                   "button[role='tab']{transition: color .25s ease, background-color .25s ease, transform .18s ease;}"
+                   "button[role='tab']:hover{transform:translateY(-1px)} button[role='tab']:active{transform:scale(.95)}")
+    if ui.get("cards_fx", True):
+        css.append("div[data-testid='stMetric'],div[data-testid='stAlert'],div[data-testid='stDataFrame'],"
+                   "[data-testid='stChatMessage'],.ai-hero{animation-name: popIn; animation-duration:.45s;"
+                   "animation-timing-function:cubic-bezier(.2,.9,.3,1.2); animation-fill-mode:both;}"
+                   ".ai-hero{animation: popIn .45s cubic-bezier(.2,.9,.3,1.2) both, aiShift 9s ease .45s infinite;}"
+                   "@keyframes popIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}")
+    if ui.get("click_fx", True):
+        css.append("button[data-testid^='stBaseButton']{position:relative;overflow:hidden;}"
+                   "button[data-testid^='stBaseButton']::after{content:'';position:absolute;inset:0;pointer-events:none;"
+                   "background:radial-gradient(circle,rgba(255,255,255,.7) 12%,transparent 13%) 50% 50%/1100% 1100% no-repeat;"
+                   "opacity:0;transition:background-size .6s ease,opacity 1s ease;}"
+                   "button[data-testid^='stBaseButton']:active::after{background-size:0 0;opacity:1;transition:0s;}"
+                   "button[data-testid^='stBaseButton']:active{transform:scale(.95) !important;}"
+                   "label[data-baseweb='checkbox']:active,label[data-baseweb='radio']:active{transform:scale(.96);}")
+    if ui.get("hover_fx", True):
+        css.append("div[data-testid='stMetric'],[data-testid='stChatMessage'],div[data-testid='stVerticalBlockBorderWrapper']"
+                   "{transition: transform .22s ease, box-shadow .22s ease;}"
+                   "div[data-testid='stMetric']:hover,[data-testid='stChatMessage']:hover{transform:translateY(-3px);"
+                   "box-shadow:0 10px 24px rgba(124,77,255,.22);}")
+    return "".join(css) + reduced
+
+
+def _inject_motion(ui):
+    st.markdown(f"<style>{_motion_css(ui)}</style>", unsafe_allow_html=True)
+
+
+def _clear_user_state():
+    """Forget everything tied to the signed-in user (called on log out / account deletion)."""
+    for k in list(st.session_state.keys()):
+        if k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "ai_mode", "ai_state",
+                 "ai_stream", "ai_pending", "goto", "_pending_state") or k.startswith("ui_"):
+            st.session_state.pop(k, None)
+
+
+def _save_ui():
+    u = st.session_state.get("user")
+    if u:
+        prefs_db.save_ui(u, {k: st.session_state.get(f"ui_{k}", True) for k in UI_KEYS})
+
+
+def _typewriter(text):
+    """Yield the reply a few characters at a time (about 1.4 s in total at most)."""
+    toks = re.findall(r"\S+\s*", text) or [text]
+    delay = min(0.03, 1.4 / len(toks))
+    for tok in toks:
+        yield tok
+        time.sleep(delay)
 
 
 # --------------------------------------------------------------------------- login
@@ -221,6 +304,7 @@ def _signup_screen(pending):
 
 
 def login_screen():
+    _inject_motion(prefs_db.UI_DEFAULTS)
     st.title("🎓 Grade & Report Card Generator")
     pending = st.session_state.get("pending")
     if pending:
@@ -272,6 +356,15 @@ if "user" not in st.session_state:
 
 user = st.session_state["user"]
 
+# Changes the assistant asked for (display mode, effect toggles): applied here, before those widgets exist.
+for _k, _v in st.session_state.pop("_pending_state", {}).items():
+    st.session_state[_k] = _v
+_saved_ui = prefs_db.load_ui(user)
+for _k in UI_KEYS:
+    st.session_state.setdefault(f"ui_{_k}", _saved_ui[_k])
+UI = {k: st.session_state[f"ui_{k}"] for k in UI_KEYS}
+_inject_motion(UI)
+
 # --------------------------------------------------------------------------- onboarding
 if not cdb.is_onboarded(user):
     st.title("🎓 Welcome!")
@@ -294,11 +387,14 @@ if not cdb.is_onboarded(user):
     st.stop()
 
 # --------------------------------------------------------------------------- main app
-head_l, head_r = st.columns([3, 1], vertical_alignment="center")
+head_l, head_fx, head_r = st.columns([3, 1.3, 1], vertical_alignment="center")
 head_l.markdown(f"**👤 {user}**")
+with head_fx.popover("✨ Effects", width="stretch"):
+    st.caption("Turn animations on or off. Saved to your account.")
+    for _k in UI_KEYS:
+        st.toggle(prefs_db.UI_LABELS[_k], key=f"ui_{_k}", on_change=_save_ui)
 if head_r.button("Log out", width="stretch"):
-    for _k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "ai_mode", "goto"):
-        st.session_state.pop(_k, None)
+    _clear_user_state()
     st.rerun()
 
 st.title("🎓 Grade & Report Card Generator")
@@ -557,45 +653,51 @@ def _ai_client(key):
 
 
 with tab_ai:
-    st.markdown("#### 🤖 Study assistant")
     api_key, ai_model = _ai_settings()
+    st.markdown('<div class="ai-hero"><div class="orb">✨</div><div><b>Study assistant</b><br>'
+                '<span>Tell me what you need. I can record grades, build study plans, make report cards, '
+                'change your settings and move you around the app.</span></div></div>', unsafe_allow_html=True)
     use_claude = False
-    if api_key:  # an API key is only ever configured on purpose; the free helper is the default
-        use_claude = st.radio("Assistant", ["Free helper (no cost)", "Claude AI (uses your API credits)"],
+    if api_key:  # an API key is only ever configured on purpose
+        use_claude = st.radio("Assistant", ["Built-in assistant", "Claude AI (uses your API credits)"],
                               horizontal=True, key="ai_mode").startswith("Claude")
     if use_claude:
-        st.caption("Ask me anything: record grades, work out your GPA, review your files, get advice or a study plan. "
-                   "I can change things in the app and I'll tell you what I did. Your messages, grades and any file I "
-                   "read are sent to Anthropic's Claude. I can't change passwords or delete accounts or files.")
-    else:
-        st.caption("A free built-in helper: no AI service, no cost, and nothing leaves the app. It understands short "
-                   "commands like `I got 45/50 in math`, `how am I doing?`, `study plan`, `what's my GPA?` or "
-                   "`go to files`. Type `help` to see everything it can do.")
+        st.caption("Your messages, grades and any file I read are sent to Anthropic's Claude. "
+                   "I can't change passwords or delete accounts or files.")
     st.session_state.setdefault("ai_msgs", [])
     st.session_state.setdefault("ai_log", [])
     st.session_state.setdefault("ai_usage", [0, 0])
-    for m in st.session_state["ai_log"]:
-        with st.chat_message(m["role"]):
-            for act in m.get("actions", []):
-                st.caption(act)
-            st.markdown(m["text"])
+    typing_on = UI["animations"] and UI["typing_fx"]
+    stream_idx = st.session_state.pop("ai_stream", None)
+
     if not st.session_state["ai_log"]:
-        st.markdown("**Try:**")
-        qa, qb, qc, qd = st.columns(4)
-        if qa.button("📅 Study plan", width="stretch"):
-            st.session_state["ai_pending"] = "Make me a weekly study plan and save it"
-        if qb.button("📈 How am I doing?", width="stretch"):
-            st.session_state["ai_pending"] = "How am I doing?"
-        if qc.button("🎯 My GPA", width="stretch"):
-            st.session_state["ai_pending"] = "What's my GPA?"
-        if qd.button("💡 How to improve", width="stretch"):
-            st.session_state["ai_pending"] = "How can I improve?"
-    typed = st.chat_input("Type a command, or 'help'…", max_chars=ai.MAX_USER_CHARS)
+        with st.chat_message("assistant", avatar="✨"):
+            st.markdown(f"Hi **{user}**! 👋 What would you like to do? You can say things like "
+                        "*\"I got 45/50 in math\"*, *\"make me a study plan\"* or *\"turn animations off\"*. "
+                        "Type **help** to see everything I can do.")
+    for idx, m in enumerate(st.session_state["ai_log"]):
+        with st.chat_message(m["role"], avatar="🧑‍🎓" if m["role"] == "user" else "✨"):
+            if m.get("actions"):
+                st.markdown("".join(f'<span class="act">{html.escape(x)}</span>' for x in m["actions"]), unsafe_allow_html=True)
+            if idx == stream_idx and typing_on and m["role"] == "assistant":
+                st.write_stream(_typewriter(m["text"]))
+            else:
+                st.markdown(m["text"])
+
+    if not st.session_state["ai_log"]:
+        sugg = [("📅 Study plan", "Make me a weekly study plan and save it"), ("📈 How am I doing?", "How am I doing?"),
+                ("🎯 My GPA", "What's my GPA?"), ("💡 How to improve", "How can I improve?"),
+                ("🧾 Make a report card", "Make a report card"), ("❓ What can you do?", "help")]
+        for row in (sugg[:3], sugg[3:]):
+            for col, (label, text) in zip(st.columns(3), row):
+                if col.button(label, width="stretch", key=f"sg_{label}"):
+                    st.session_state["ai_pending"] = text
+    typed = st.chat_input("Ask me to do something…  e.g. I got 45/50 in math", max_chars=ai.MAX_USER_CHARS)
     prompt = typed or st.session_state.pop("ai_pending", None)
     if prompt:
         res = None
         if not use_claude:
-            res = helper.handle(user, prompt, TAB_MAP)
+            res = helper.handle(user, prompt, TAB_MAP, st.session_state.setdefault("ai_state", {}))
             res["usage"] = (0, 0)
         else:
             turns = sum(1 for m in st.session_state["ai_log"] if m["role"] == "user")
@@ -610,11 +712,23 @@ with tab_ai:
         if res is not None:
             if res["error"]:
                 st.error(res["error"])
+            elif res.get("clear"):
+                for k in ("ai_msgs", "ai_log", "ai_usage", "ai_state"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+            elif res.get("logout"):
+                _clear_user_state()
+                st.rerun()
             else:
                 st.session_state["ai_log"] += [{"role": "user", "text": prompt},
                                                {"role": "assistant", "text": res["text"], "actions": res["actions"]}]
+                st.session_state["ai_stream"] = len(st.session_state["ai_log"]) - 1
                 st.session_state["ai_usage"][0] += res["usage"][0]
                 st.session_state["ai_usage"][1] += res["usage"][1]
+                if res.get("report"):
+                    st.session_state["last_report"] = res["report"]
+                if res.get("set_state"):
+                    st.session_state["_pending_state"] = {**st.session_state.get("_pending_state", {}), **res["set_state"]}
                 if res["nav"]:
                     st.session_state["goto"] = res["nav"]
                 st.rerun()
@@ -624,7 +738,7 @@ with tab_ai:
             u_in, u_out = st.session_state["ai_usage"]
             n1.caption(f"Model: {ai_model} · tokens used this chat: {u_in:,} in / {u_out:,} out")
         if n2.button("New chat", width="stretch"):
-            for k in ("ai_msgs", "ai_log", "ai_usage"):
+            for k in ("ai_msgs", "ai_log", "ai_usage", "ai_state"):
                 st.session_state.pop(k, None)
             st.rerun()
 
@@ -685,7 +799,7 @@ with tab_account:
                 st.error("Your password is incorrect.")
             else:
                 auth.delete_member(user)
-                del st.session_state["user"]
+                _clear_user_state()
                 st.rerun()
 
 
