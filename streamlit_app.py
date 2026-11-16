@@ -29,6 +29,7 @@ st.markdown(
     <style>
       /* Works in both light and dark: only translucent colors, text inherits from the theme. */
       footer {visibility: hidden;}
+      [data-testid="stMainMenu"], [data-testid="stAppDeployButton"] {display: none !important;}
       .stApp {
         background-image:
           radial-gradient(900px 420px at 0% -5%, rgba(124,77,255,.22), transparent 70%),
@@ -110,9 +111,10 @@ st.markdown(
       div[data-testid="stChatInput"], div[data-testid="stChatInput"] > div {border-radius: 24px !important;}
       div[data-testid="stDataFrame"], div[data-testid="stImage"] img, pre, code {border-radius: 14px !important;}
       div[data-testid="stDataFrame"] {overflow: hidden;}
-      div[data-baseweb="popover"] > div, div[data-testid="stPopoverBody"] {border-radius: 20px !important;
-        -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
-        box-shadow: 0 18px 50px rgba(0,0,0,.28) !important; border: 1px solid rgba(127,127,127,.25);}
+      div[data-baseweb="popover"] > div {border-radius: 20px !important; overflow: hidden;
+        box-shadow: 0 18px 50px rgba(0,0,0,.28) !important;}
+      div[data-testid="stPopoverBody"] {border-radius: 20px !important; border: 1px solid rgba(127,127,127,.25);
+        -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);}
       div[data-baseweb="tooltip"] > div, div[data-testid="stToast"] {border-radius: 16px !important;}
       /* buttons */
       button[data-testid^="stBaseButton"] {border-radius: 13px !important;}
@@ -200,6 +202,37 @@ def _motion_css(ui):
     return "".join(css) + reduced
 
 
+_COUNTER = ("img,video,.ai-hero,.prof .avatar,.badge,h1,button[data-testid='stBaseButton-primary'],"
+            "button[data-testid='stBaseButton-primaryFormSubmit'],.st-key-theme_quick button p{filter:invert(1) hue-rotate(180deg);}")
+
+
+def _theme_css(theme, animate):
+    """Dark mode by inverting the page (keeps charts/tables readable) and restoring images and the colourful bits."""
+    dark = "html{filter:invert(1) hue-rotate(180deg);background:#fff;}" + _COUNTER
+    base = "html{transition: filter .45s ease;}" if animate else ""
+    if theme == "Dark":
+        return base + dark
+    if theme == "Auto":
+        return base + "@media (prefers-color-scheme: dark){" + dark + "}"
+    return base
+
+
+def _inject_theme(theme, animate):
+    st.markdown(f"<style>{_theme_css(theme, animate)}</style>", unsafe_allow_html=True)
+
+
+def _save_theme():
+    u = st.session_state.get("user")
+    if u:
+        prefs_db.save_theme(u, st.session_state.get("theme_mode", "Light"))
+
+
+def _toggle_theme():
+    cur = st.session_state.get("theme_mode", "Light")
+    st.session_state["theme_mode"] = "Light" if cur == "Dark" else "Dark"
+    _save_theme()
+
+
 def _inject_motion(ui):
     st.markdown(f"<style>{_motion_css(ui)}</style>", unsafe_allow_html=True)
 
@@ -208,7 +241,7 @@ def _clear_user_state():
     """Forget everything tied to the signed-in user (called on log out / account deletion)."""
     for k in list(st.session_state.keys()):
         if k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "ai_mode", "ai_state",
-                 "ai_stream", "ai_pending", "goto", "_pending_state") or k.startswith("ui_"):
+                 "ai_stream", "ai_pending", "goto", "_pending_state", "theme_mode") or k.startswith("ui_"):
             st.session_state.pop(k, None)
 
 
@@ -432,13 +465,11 @@ user = st.session_state["user"]
 for _k, _v in st.session_state.pop("_pending_state", {}).items():
     st.session_state[_k] = _v
 _saved_ui = prefs_db.load_ui(user)
-for _k in UI_KEYS:
-    st.session_state.setdefault(f"ui_{_k}", _saved_ui[_k])
-UI = {k: st.session_state[f"ui_{k}"] for k in UI_KEYS}
-_inject_motion(UI)
 
 # --------------------------------------------------------------------------- onboarding
 if not cdb.is_onboarded(user):
+    _inject_motion(_saved_ui)
+    _inject_theme(prefs_db.load_theme(user), _saved_ui["animations"] and _saved_ui["transitions"])
     st.title("🎓 Welcome!")
     st.markdown('<p class="sub">Tell us about your classes. You can change these any time.</p>',
                 unsafe_allow_html=True)
@@ -459,7 +490,15 @@ if not cdb.is_onboarded(user):
     st.stop()
 
 # --------------------------------------------------------------------------- main app
-head_l, _head_gap = st.columns([2, 3], vertical_alignment="center")
+# These keys must be created in the same run as the profile-menu widgets that use them; creating them
+# earlier (e.g. during onboarding) makes the browser show the switches as off.
+for _k in UI_KEYS:
+    st.session_state.setdefault(f"ui_{_k}", _saved_ui[_k])
+UI = {k: st.session_state[f"ui_{k}"] for k in UI_KEYS}
+_inject_motion(UI)
+st.session_state.setdefault("theme_mode", prefs_db.load_theme(user))
+_inject_theme(st.session_state["theme_mode"], UI["animations"] and UI["transitions"])
+head_l, _head_gap, head_theme = st.columns([2, 3, 1], vertical_alignment="center")
 with head_l.popover(f"👤 {user}", width="stretch"):
     _email = auth.get_email(user) or "—"
     _cls, _grades, (_nfiles, _used) = cdb.list_classes(user), cdb.list_grades(user), files_db.usage(user)
@@ -472,6 +511,9 @@ with head_l.popover(f"👤 {user}", width="stretch"):
     if _cls["previous"]:
         st.caption(f"{len(_cls['previous'])} previous class(es)")
     st.divider()
+    st.markdown("**🌓 Appearance**")
+    st.radio("Theme", prefs_db.THEMES, horizontal=True, key="theme_mode", on_change=_save_theme,
+             label_visibility="collapsed", help="Auto follows your device's light/dark setting.")
     st.markdown("**✨ Effects**")
     st.caption("Turn animations on or off. Saved to your account.")
     for _k in UI_KEYS:
@@ -483,6 +525,9 @@ with head_l.popover(f"👤 {user}", width="stretch"):
     if st.button("Log out", width="stretch", key="prof_logout"):
         _clear_user_state()
         st.rerun()
+_is_dark = st.session_state.get("theme_mode") == "Dark"
+head_theme.button("☀️" if _is_dark else "🌙", key="theme_quick", on_click=_toggle_theme, width="stretch",
+                  help="Switch to light mode" if _is_dark else "Switch to dark mode")
 
 st.title("🎓 Grade & Report Card Generator")
 st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fail result</p>',
@@ -828,6 +873,115 @@ with tab_ai:
             for k in ("ai_msgs", "ai_log", "ai_usage", "ai_state"):
                 st.session_state.pop(k, None)
             st.rerun()
+
+
+# ---- GPA tab
+with tab_gpa:
+    st.markdown("#### GPA calculator")
+    gmode = st.radio("Enter grades as", ["Letter grades", "Percentages"], horizontal=True, key="gpa_mode")
+    st.caption("Uses your GPA scale. Weighted GPA adds each course level's bonus (no bonus for a 0-point grade). "
+               "Leave a grade empty for courses still in progress. Change the scale, bonuses and "
+               "percentage cut-offs in the Grading rules tab."
+               + (" Percentages are converted to letters using your cut-offs." if gmode == "Percentages" else ""))
+    n = max(len(my["current"]), 4)
+    names = (my["current"] + [""] * n)[:n]
+    level_names = [l["level"] for l in gpa_levels]
+    if gmode == "Letter grades":
+        gdf = pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n,
+                            "Level": [level_names[0]] * n})
+        gcfg = {"Grade": st.column_config.SelectboxColumn(options=[g["grade"] for g in gpa_scale])}
+    else:
+        gdf = pd.DataFrame({"Course": names, "Percent": [None] * n, "Credits": [1.0] * n,
+                            "Level": [level_names[0]] * n})
+        gcfg = {"Percent": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)}
+    with st.form("gpa"):
+        gtable = st.data_editor(
+            gdf, num_rows="dynamic", width="stretch", hide_index=True,
+            column_config={**gcfg,
+                           "Credits": st.column_config.NumberColumn(min_value=0.0, step=0.5),
+                           "Level": st.column_config.SelectboxColumn(options=level_names, required=True)},
+        )
+        calc = st.form_submit_button("Calculate GPA", type="primary", width="stretch")
+    if calc:
+        g, gerr = gpa_lib.compute_gpa(gtable.to_dict("records"), gpa_scale, gpa_levels)
+        if gerr:
+            st.error(gerr)
+        else:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Unweighted GPA", f"{g['unweighted']:.2f}")
+            m2.metric("Weighted GPA", f"{g['weighted']:.2f}")
+            m3.metric("Credits counted", f"{g['credits']:g}")
+            st.dataframe(pd.DataFrame(g["rows"]), width="stretch", hide_index=True)
+
+
+# ---- Grading rules tab
+with tab_rules:
+    st.markdown("#### Your grading rules")
+    st.caption("These decide the grade letters and the pass/fail result on your report cards. "
+               "Edit the table, add or delete rows, then save.")
+    with st.form("rules"):
+        edited = st.data_editor(
+            pd.DataFrame({"Grade": [g["grade"] for g in scale],
+                          "Minimum %": [g["min"] for g in scale],
+                          "Remark": [g["remark"] for g in scale]}),
+            num_rows="dynamic", width="stretch", hide_index=True,
+            column_config={"Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)},
+        )
+        c1, c2 = st.columns(2)
+        ps = c1.number_input("Pass mark per subject (%)", 0.0, 100.0, float(rules["pass_subject"]), 0.5)
+        po = c2.number_input("Pass mark overall (%)", 0.0, 100.0, float(rules["pass_overall"]), 0.5)
+        req = st.checkbox("Must pass every subject to pass overall", value=rules["require_all"])
+        save_rules = st.form_submit_button("Save grading rules", type="primary", width="stretch")
+    if save_rules:
+        new_scale, serr = grading.clean_scale(
+            [{"grade": r["Grade"], "min": r["Minimum %"], "remark": r["Remark"]}
+             for r in edited.to_dict("records")])
+        new_rules, rerr = grading.clean_rules(ps, po, req)
+        if serr or rerr:
+            st.error(serr or rerr)
+        else:
+            prefs_db.save(user, new_scale, new_rules)
+            st.toast("Grading rules saved.")
+            st.rerun()
+    if st.button("Reset to defaults", width="stretch"):
+        prefs_db.reset(user)
+        st.rerun()
+    st.caption("The lowest grade must start at 0% so every score gets a grade.")
+
+    st.divider()
+    st.markdown("#### GPA scale")
+    st.caption("Edit the points for each grade, the lowest percentage that earns it (used when you enter "
+               "percentages in the GPA tab; leave empty if it should never come from a percentage), and the "
+               "weighted-GPA bonus for each course level. One grade must start at 0%.")
+    with st.form("gpa_rules"):
+        gs = st.data_editor(
+            pd.DataFrame({"Grade": [g["grade"] for g in gpa_scale], "Points": [g["points"] for g in gpa_scale],
+                          "Minimum %": [g["min"] for g in gpa_scale]}),
+            num_rows="dynamic", width="stretch", hide_index=True, key="gs_editor",
+            column_config={"Points": st.column_config.NumberColumn(min_value=0.0, max_value=10.0, step=0.1),
+                           "Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)},
+        )
+        st.markdown("**Course levels (weighted bonus)**")
+        lv = st.data_editor(
+            pd.DataFrame({"Level": [l["level"] for l in gpa_levels], "Bonus": [l["bonus"] for l in gpa_levels]}),
+            num_rows="dynamic", width="stretch", hide_index=True, key="lv_editor",
+            column_config={"Bonus": st.column_config.NumberColumn(min_value=0.0, max_value=5.0, step=0.1)},
+        )
+        save_gpa_rules = st.form_submit_button("Save GPA scale", type="primary", width="stretch")
+    if save_gpa_rules:
+        new_gs, gerr1 = gpa_lib.clean_scale(
+            [{"grade": r["Grade"], "points": r["Points"], "min": r["Minimum %"]} for r in gs.to_dict("records")])
+        new_lv, gerr2 = gpa_lib.clean_levels(
+            [{"level": r["Level"], "bonus": r["Bonus"]} for r in lv.to_dict("records")])
+        if gerr1 or gerr2:
+            st.error(gerr1 or gerr2)
+        else:
+            prefs_db.save_gpa(user, new_gs, new_lv)
+            st.toast("GPA scale saved.")
+            st.rerun()
+    if st.button("Reset GPA scale to defaults", width="stretch"):
+        prefs_db.reset_gpa(user)
+        st.rerun()
 
 
 # ---- Account tab

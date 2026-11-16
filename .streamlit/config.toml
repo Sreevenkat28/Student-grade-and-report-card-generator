@@ -1,6 +1,6 @@
-# No "base" set, so Streamlit follows the viewer's choice: Light / Dark / System
-# (menu at the top right -> Settings -> Theme).
+# Base is light; dark mode is the app's own switch (profile menu / moon button).
 [theme]
+base = "light"
 primaryColor = "#7c4dff"
 font = "sans serif"
 baseRadius = "1rem"

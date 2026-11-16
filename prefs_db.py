@@ -114,3 +114,18 @@ def save_ui(username: str, ui: dict):
     data = _read(username)
     data["ui"] = {k: bool(ui.get(k, UI_DEFAULTS[k])) for k in UI_KEYS}
     _write(username, data)
+
+
+THEMES = ["Light", "Dark", "Auto"]
+
+
+def load_theme(username: str) -> str:
+    t = _read(username).get("theme")
+    return t if t in THEMES else "Light"
+
+
+def save_theme(username: str, theme: str):
+    if theme in THEMES:
+        data = _read(username)
+        data["theme"] = theme
+        _write(username, data)

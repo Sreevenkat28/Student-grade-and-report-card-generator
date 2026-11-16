@@ -31,6 +31,7 @@ HELP = """Here's what I can do. Just tell me in plain words:
 - `set pass mark to 50` · `overall pass mark 45` · `must pass every subject off`
 - `set A to 85` · `set honors bonus to 0.5` · `set B+ points to 3.4` · `reset grading rules`
 - `show grades as percentages` (or letters / both)
+- `dark mode` · `light mode` · `auto theme` (match your device)
 - `turn animations off` · `turn on click effects` · `typing effect off`
 
 **Files & navigation**
@@ -425,6 +426,28 @@ def _ui_command(user, t, out):
     return f"Okay, **{prefs_db.UI_LABELS[key].lower()}** is now **{'on' if value else 'off'}**."
 
 
+def _theme_command(user, t, out):
+    """`dark mode`, `turn off dark mode`, `switch to light theme`, `auto theme`. Returns text or None."""
+    if len(t.split()) > 8 or not re.search(r"\b(mode|theme|appearance)\b", t):
+        return None
+    word = re.search(r"\b(dark|night|light|auto|automatic|system)\b", t)
+    if not word and not re.search(r"match (?:my )?(?:device|system)", t):
+        return None
+    w = word.group(1) if word else "auto"
+    off = bool(re.search(r"\b(off|disable|stop|no)\b", t))
+    if w in ("auto", "automatic", "system"):
+        theme = "Auto"
+    elif w in ("dark", "night"):
+        theme = "Light" if off else "Dark"
+    else:
+        theme = "Dark" if off else "Light"
+    prefs_db.save_theme(user, theme)
+    out["set_state"]["theme_mode"] = theme
+    out["actions"].append(f"✅ Theme: {theme.lower()}")
+    return {"Dark": "Dark mode is on. 🌙", "Light": "Light mode is on. ☀️",
+            "Auto": "Theme set to **auto**: it will follow your device's light/dark setting."}[theme]
+
+
 def _display_command(user, t, out):
     m = re.search(r"\b(?:show|display|use|see)\b.*?\b(?:grades?\s+)?(?:as|in)\s+(?P<m>letters?|percent(?:age)?s?|both)\b", t) or \
         re.search(r"\b(?:use|show)\s+(?P<m>letter|percentage|percent)\s+grades?\b", t)
@@ -562,6 +585,8 @@ def handle(user, text, tabs, state=None):
         out["text"] = _show_file(user, m.group("n"))
     elif (m := REPORT.match(raw)):
         out["text"] = _report(user, m, raw, out)
+    elif (txt := _theme_command(user, t, out)):
+        out["text"] = txt
     elif (txt := _display_command(user, t, out)):
         out["text"] = txt
     elif (txt := _ui_command(user, t, out)):
