@@ -20,5 +20,8 @@ The Assistant tab is a chat-style command assistant that works for everyone with
 
 It uses pattern matching, not a language model, so it works best with short commands. Optional: if the app owner adds `ANTHROPIC_API_KEY` to Secrets (see `.streamlit/secrets.toml.example`), a switch appears to use Claude instead. That mode is billed to the key's owner, sends messages and grades to Anthropic, and is limited to 30 messages per hour per user.
 
+## Look and animations
+The interface uses an Apple-style design: SF system font, large rounded corners, frosted-glass panels and macOS-style segmented tabs.
+
 ## Animations
-The **✨ Effects** menu (top of the page) toggles: all animations, tab transitions, click/press effects, hover lift, the typing effect in the assistant, and fade-in cards. Choices are saved per account, and the assistant can change them too (`turn click effects off`). Animations are disabled automatically for visitors whose device asks for reduced motion.
+Click your name at the top left to open your **profile menu**: your details (email, class/grade/file counts), the **✨ Effects** switches, Account settings and Log out. The switches are: all animations, tab transitions, click/press effects, hover lift, the typing effect in the assistant, and fade-in cards. Choices are saved per account, and the assistant can change them too (`turn click effects off`). Animations are disabled automatically for visitors whose device asks for reduced motion.

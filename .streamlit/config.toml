@@ -3,8 +3,8 @@
 [theme]
 primaryColor = "#7c4dff"
 font = "sans serif"
-baseRadius = "0.7rem"
-buttonRadius = "0.7rem"
+baseRadius = "1rem"
+buttonRadius = "0.85rem"
 
 [server]
 maxUploadSize = 15

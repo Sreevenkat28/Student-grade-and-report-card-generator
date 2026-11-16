@@ -65,7 +65,7 @@ st.markdown(
 
       div[data-testid="stMetric"] {background: rgba(124,77,255,.10); border: 1px solid rgba(124,77,255,.35);
           border-radius: 12px; padding: 12px 14px;}
-      div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 14px;}
+      div[data-testid="stForm"] {border-radius: 14px;}
       button[role="tab"] {font-weight: 600; font-size: 1.02rem;}
       .chip {display:inline-block; padding:.25rem .7rem; border-radius:999px; font-weight:600;
              background: rgba(124,77,255,.18); border:1px solid rgba(124,77,255,.4); margin:.15rem .2rem 0 0;}
@@ -85,6 +85,59 @@ st.markdown(
       [data-testid="stChatInput"] {border-radius:16px;}
       .act {display:inline-block; font-size:.8rem; padding:.12rem .6rem; border-radius:999px; margin:0 .3rem .35rem 0;
             background: rgba(46,160,67,.14); border:1px solid rgba(46,160,67,.4);}
+
+      /* ===== macOS look: SF font stack, big rounded corners, frosted glass, segmented tabs ===== */
+      .stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp p,.stApp li,.stApp label,.stApp input,.stApp textarea,
+      .stApp [data-testid="stMarkdownContainer"],.stApp [data-testid="stMarkdownContainer"] *,.stApp button p,
+      .stApp [data-baseweb="tab"],.stApp [data-testid="stCaptionContainer"],.stApp [data-testid="stMetricValue"],
+      .stApp [data-testid="stMetricLabel"] {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Segoe UI", system-ui, sans-serif !important;
+        letter-spacing: -0.005em;}
+      .stApp h1 {letter-spacing:-0.02em;}
+      /* frosted-glass panels */
+      [class*="st-key-card"], div[data-testid="stForm"], div[data-testid="stExpander"],
+      div[data-testid="stMetric"], div[data-testid="stAlert"] {
+        border-radius: 20px !important; border: 1px solid rgba(127,127,127,.22) !important;
+        background-color: rgba(127,127,127,.07);
+        -webkit-backdrop-filter: blur(18px) saturate(170%); backdrop-filter: blur(18px) saturate(170%);
+        box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 10px 28px rgba(0,0,0,.07);}
+      div[data-testid="stMetric"] {border-radius: 18px !important;}
+      div[data-testid="stExpander"] details, div[data-testid="stExpander"] summary {border-radius: 20px !important;}
+      /* inputs */
+      div[data-baseweb="input"], div[data-baseweb="base-input"], div[data-baseweb="select"] > div, textarea,
+      div[data-testid="stNumberInputContainer"], div[data-testid="stFileUploaderDropzone"] {border-radius: 13px !important;}
+      div[data-testid="stFileUploaderDropzone"] {border-radius: 18px !important;}
+      div[data-testid="stChatInput"], div[data-testid="stChatInput"] > div {border-radius: 24px !important;}
+      div[data-testid="stDataFrame"], div[data-testid="stImage"] img, pre, code {border-radius: 14px !important;}
+      div[data-testid="stDataFrame"] {overflow: hidden;}
+      div[data-baseweb="popover"] > div, div[data-testid="stPopoverBody"] {border-radius: 20px !important;
+        -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+        box-shadow: 0 18px 50px rgba(0,0,0,.28) !important; border: 1px solid rgba(127,127,127,.25);}
+      div[data-baseweb="tooltip"] > div, div[data-testid="stToast"] {border-radius: 16px !important;}
+      /* buttons */
+      button[data-testid^="stBaseButton"] {border-radius: 13px !important;}
+      /* tabs as a macOS segmented control */
+      div[data-baseweb="tab-list"] {background: rgba(120,120,128,.16); border-radius: 15px; padding: 4px; gap: 2px;
+        overflow-x: auto; scrollbar-width: none;}
+      div[data-baseweb="tab-list"]::-webkit-scrollbar {display:none;}
+      div[data-baseweb="tab-border"] {display:none;}
+      button[role="tab"] {border-radius: 11px !important; padding: .45rem .8rem !important; position: relative; z-index: 1;}
+      div[data-baseweb="tab-highlight"] {height: calc(100% - 8px) !important; top: 4px !important; border-radius: 11px;
+        background: rgba(124,77,255,.26) !important; border: 1px solid rgba(124,77,255,.45); z-index: 0;
+        box-shadow: 0 2px 8px rgba(124,77,255,.25);}
+      button[role="tab"][aria-selected="true"] {font-weight: 700;}
+      /* profile menu */
+      .prof {display:flex; gap:.8rem; align-items:center; margin-bottom:.4rem;}
+      .prof .avatar {width:3rem; height:3rem; border-radius:50%; display:flex; align-items:center; justify-content:center; flex:none;
+        font-weight:800; font-size:1.25rem; color:#fff; background:linear-gradient(135deg,#7c4dff,#ff4d9d);
+        box-shadow:0 4px 14px rgba(124,77,255,.45);}
+      .prof span {opacity:.75; font-size:.88rem; word-break:break-all;}
+      .stats {display:grid; grid-template-columns:repeat(3,1fr); gap:.5rem; margin:.5rem 0 .2rem;}
+      .stats div {text-align:center; padding:.5rem .2rem; border-radius:14px; background:rgba(124,77,255,.1);
+        border:1px solid rgba(124,77,255,.25); font-size:.78rem; opacity:.95;}
+      .stats b {display:block; font-size:1.2rem;}
+      .badge {display:inline-block; font-size:.7rem; font-weight:700; padding:.05rem .5rem; border-radius:999px; margin-left:.4rem;
+        background:#ffb300; color:#3b2a00; vertical-align:middle;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -112,7 +165,26 @@ def _motion_css(ui):
                    "animation-timing-function:cubic-bezier(.2,.9,.3,1.2); animation-fill-mode:both;}"
                    ".ai-hero{animation: popIn .45s cubic-bezier(.2,.9,.3,1.2) both, aiShift 9s ease .45s infinite;}"
                    "@keyframes popIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}")
+    if ui.get("transitions", True):
+        css.append("div[data-testid='stPopoverBody'],div[data-baseweb='popover'] > div{animation: menuIn .22s cubic-bezier(.2,.9,.3,1.15) both;"
+                   "transform-origin: top left;}@keyframes menuIn{from{opacity:0;transform:scale(.92) translateY(-6px)}to{opacity:1;transform:none}}"
+                   "div[data-testid='stExpander'] details[open] > div{animation: expandIn .3s ease both;}"
+                   "@keyframes expandIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}"
+                   "div[data-testid='stToast']{animation: menuIn .3s cubic-bezier(.2,.9,.3,1.15) both;}"
+                   "section.main .block-container,div.block-container{animation: pageIn .55s ease both;}"
+                   "@keyframes pageIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}")
+    if ui.get("cards_fx", True):
+        css.append("div[data-testid='stForm'],div[data-testid='stExpander'],[class*='st-key-card'],"
+                   "div[data-testid='stDataFrame'],div[data-testid='stFileUploader'],div[data-testid='stImage']"
+                   "{animation: popIn .5s cubic-bezier(.2,.9,.3,1.1) both;}"
+                   "h1{animation: popIn .6s cubic-bezier(.2,.9,.3,1.1) both;}"
+                   ".stats div{animation: popIn .5s cubic-bezier(.2,.9,.3,1.1) both;} .stats div:nth-child(2){animation-delay:.07s}"
+                   ".stats div:nth-child(3){animation-delay:.14s}")
     if ui.get("click_fx", True):
+        css.append("input:focus,textarea:focus,div[data-baseweb='select'] > div:focus-within,div[data-baseweb='input']:focus-within"
+                   "{box-shadow:0 0 0 4px rgba(124,77,255,.25) !important;transition:box-shadow .2s ease;}"
+                   "input,textarea,div[data-baseweb='select'] > div,div[data-baseweb='input']{transition: box-shadow .2s ease, border-color .2s ease;}"
+                   "summary:active,div[data-baseweb='select']:active{transform:scale(.99);}")
         css.append("button[data-testid^='stBaseButton']{position:relative;overflow:hidden;}"
                    "button[data-testid^='stBaseButton']::after{content:'';position:absolute;inset:0;pointer-events:none;"
                    "background:radial-gradient(circle,rgba(255,255,255,.7) 12%,transparent 13%) 50% 50%/1100% 1100% no-repeat;"
@@ -121,7 +193,7 @@ def _motion_css(ui):
                    "button[data-testid^='stBaseButton']:active{transform:scale(.95) !important;}"
                    "label[data-baseweb='checkbox']:active,label[data-baseweb='radio']:active{transform:scale(.96);}")
     if ui.get("hover_fx", True):
-        css.append("div[data-testid='stMetric'],[data-testid='stChatMessage'],div[data-testid='stVerticalBlockBorderWrapper']"
+        css.append("div[data-testid='stMetric'],[data-testid='stChatMessage'],[class*='st-key-card']"
                    "{transition: transform .22s ease, box-shadow .22s ease;}"
                    "div[data-testid='stMetric']:hover,[data-testid='stChatMessage']:hover{transform:translateY(-3px);"
                    "box-shadow:0 10px 24px rgba(124,77,255,.22);}")
@@ -387,15 +459,30 @@ if not cdb.is_onboarded(user):
     st.stop()
 
 # --------------------------------------------------------------------------- main app
-head_l, head_fx, head_r = st.columns([3, 1.3, 1], vertical_alignment="center")
-head_l.markdown(f"**👤 {user}**")
-with head_fx.popover("✨ Effects", width="stretch"):
+head_l, _head_gap = st.columns([2, 3], vertical_alignment="center")
+with head_l.popover(f"👤 {user}", width="stretch"):
+    _email = auth.get_email(user) or "—"
+    _cls, _grades, (_nfiles, _used) = cdb.list_classes(user), cdb.list_grades(user), files_db.usage(user)
+    _badge = '<span class="badge">ADMIN</span>' if auth.is_admin(user) else ""
+    st.markdown(f'<div class="prof"><div class="avatar">{html.escape(user[:1].upper())}</div>'
+                f'<div><b>{html.escape(user)}</b>{_badge}<br><span>{html.escape(_email)}</span></div></div>'
+                f'<div class="stats"><div><b>{len(_cls["current"])}</b>current classes</div>'
+                f'<div><b>{len(_grades)}</b>grades</div><div><b>{_nfiles}</b>files</div></div>',
+                unsafe_allow_html=True)
+    if _cls["previous"]:
+        st.caption(f"{len(_cls['previous'])} previous class(es)")
+    st.divider()
+    st.markdown("**✨ Effects**")
     st.caption("Turn animations on or off. Saved to your account.")
     for _k in UI_KEYS:
         st.toggle(prefs_db.UI_LABELS[_k], key=f"ui_{_k}", on_change=_save_ui)
-if head_r.button("Log out", width="stretch"):
-    _clear_user_state()
-    st.rerun()
+    st.divider()
+    if st.button("⚙️ Account settings", width="stretch", key="prof_account"):
+        st.session_state["goto"] = "👤 Account"
+        st.rerun()
+    if st.button("Log out", width="stretch", key="prof_logout"):
+        _clear_user_state()
+        st.rerun()
 
 st.title("🎓 Grade & Report Card Generator")
 st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fail result</p>',
@@ -423,7 +510,7 @@ def _render_report(student, res, mode):
         df["%"] = df["%"].map(lambda v: f"{v:g}%")
     if not show_letter:
         df = df.drop(columns=["Grade"])
-    with st.container(border=True):
+    with st.container(border=True, key="card_1"):
         st.markdown("<h3 style='text-align:center;margin:0'>REPORT CARD</h3>"
                     f"<p class='sub' style='margin-bottom:1rem'>{student['exam'] or 'Academic Report'}</p>",
                     unsafe_allow_html=True)
@@ -521,7 +608,7 @@ def _delete(n):
 def _class_list(title, status, empty_msg):
     other = "previous" if status == "current" else "current"
     move_label = "✅ Completed" if status == "current" else "↩ Current"
-    with st.container(border=True):
+    with st.container(border=True, key=f"card_classes_{status}"):
         st.markdown(f"#### {title} ({len(my[status])})")
         if not my[status]:
             st.caption(empty_msg)
@@ -751,7 +838,7 @@ with tab_account:
     a1.caption("Username"); a1.write(f"**{user}**")
     a2.caption("Email"); a2.write(f"**{email_now}**")
 
-    with st.container(border=True):
+    with st.container(border=True, key="card_3"):
         st.markdown("##### Change password")
         with st.form("chpw", clear_on_submit=True):
             cur = st.text_input("Current password", type="password")
@@ -761,7 +848,7 @@ with tab_account:
                 ok, msg = auth.change_password(user, cur, new1, new2)
                 (st.success if ok else st.error)(msg)
 
-    with st.container(border=True):
+    with st.container(border=True, key="card_4"):
         st.markdown("##### Change email")
         with st.form("chem", clear_on_submit=True):
             new_email = st.text_input("New email")
@@ -772,7 +859,7 @@ with tab_account:
                 if ok:
                     st.rerun()
 
-    with st.container(border=True):
+    with st.container(border=True, key="card_5"):
         st.markdown("##### Check that emails reach you")
         st.caption("Password reset codes are sent by email. Send yourself a test to confirm it works.")
         if st.button("Send a test email to my address", width="stretch"):
@@ -811,13 +898,13 @@ if IS_ADMIN:
         st.dataframe(pd.DataFrame(members, columns=["Username", "Email"]),
                      width="stretch", hide_index=True)
         others = [u for (u, _e) in members if u != user]
-        with st.container(border=True):
+        with st.container(border=True, key="card_6"):
             st.markdown("##### Delete one account")
             target = st.selectbox("Account", others, index=None, placeholder="Choose an account")
             if st.button("Delete this account", disabled=target is None):
                 auth.delete_member(target)
                 st.rerun()
-        with st.container(border=True):
+        with st.container(border=True, key="card_7"):
             st.markdown("##### Delete ALL other accounts")
             st.caption("Removes every account and its classes except yours. This cannot be undone.")
             confirm = st.text_input("Type DELETE to confirm", key="wipe_confirm")
