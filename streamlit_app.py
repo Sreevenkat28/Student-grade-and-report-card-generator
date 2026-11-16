@@ -11,6 +11,7 @@ import assistant as ai
 import auth
 import classes_db as cdb
 import files_db
+import helper
 import gpa as gpa_lib
 import grading
 import prefs_db
@@ -296,7 +297,7 @@ if not cdb.is_onboarded(user):
 head_l, head_r = st.columns([3, 1], vertical_alignment="center")
 head_l.markdown(f"**👤 {user}**")
 if head_r.button("Log out", width="stretch"):
-    for _k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "goto"):
+    for _k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "ai_mode", "goto"):
         st.session_state.pop(_k, None)
     st.rerun()
 
@@ -556,38 +557,47 @@ def _ai_client(key):
 
 
 with tab_ai:
-    st.markdown("#### 🤖 AI study assistant")
+    st.markdown("#### 🤖 Study assistant")
     api_key, ai_model = _ai_settings()
-    if not api_key:
-        st.info("The assistant isn't switched on yet. The app owner needs to add an `ANTHROPIC_API_KEY` under "
-                "Settings → Secrets (get one at console.anthropic.com), then reboot the app.")
+    use_claude = False
+    if api_key:  # an API key is only ever configured on purpose; the free helper is the default
+        use_claude = st.radio("Assistant", ["Free helper (no cost)", "Claude AI (uses your API credits)"],
+                              horizontal=True, key="ai_mode").startswith("Claude")
+    if use_claude:
+        st.caption("Ask me anything: record grades, work out your GPA, review your files, get advice or a study plan. "
+                   "I can change things in the app and I'll tell you what I did. Your messages, grades and any file I "
+                   "read are sent to Anthropic's Claude. I can't change passwords or delete accounts or files.")
     else:
-        st.caption("Ask me to record grades, work out your GPA, review your files, explain how to improve, or build a "
-                   "study plan. I can change things in the app for you, and I'll tell you what I did. Your messages, "
-                   "grades and any file I read are sent to Anthropic's Claude to answer you. "
-                   "I can't change passwords or delete accounts or files.")
-        st.session_state.setdefault("ai_msgs", [])
-        st.session_state.setdefault("ai_log", [])
-        st.session_state.setdefault("ai_usage", [0, 0])
-        for m in st.session_state["ai_log"]:
-            with st.chat_message(m["role"]):
-                for act in m.get("actions", []):
-                    st.caption(act)
-                st.markdown(m["text"])
-        if not st.session_state["ai_log"]:
-            st.markdown("**Try:**")
-            qa, qb, qc, qd = st.columns(4)
-            if qa.button("📅 Make a study plan", width="stretch"):
-                st.session_state["ai_pending"] = "Look at my classes and grades and make me a weekly study plan. Save it as a note."
-            if qb.button("📈 How can I improve?", width="stretch"):
-                st.session_state["ai_pending"] = "Based on my recorded grades, where am I weakest and how can I improve?"
-            if qc.button("🎯 My GPA", width="stretch"):
-                st.session_state["ai_pending"] = "Calculate my GPA from my recorded grades (use each class's average percent, 1 credit each)."
-            if qd.button("📁 Read my files", width="stretch"):
-                st.session_state["ai_pending"] = "List my files and summarise what's in them."
-        typed = st.chat_input("Message your assistant…", max_chars=ai.MAX_USER_CHARS)
-        prompt = typed or st.session_state.pop("ai_pending", None)
-        if prompt:
+        st.caption("A free built-in helper: no AI service, no cost, and nothing leaves the app. It understands short "
+                   "commands like `I got 45/50 in math`, `how am I doing?`, `study plan`, `what's my GPA?` or "
+                   "`go to files`. Type `help` to see everything it can do.")
+    st.session_state.setdefault("ai_msgs", [])
+    st.session_state.setdefault("ai_log", [])
+    st.session_state.setdefault("ai_usage", [0, 0])
+    for m in st.session_state["ai_log"]:
+        with st.chat_message(m["role"]):
+            for act in m.get("actions", []):
+                st.caption(act)
+            st.markdown(m["text"])
+    if not st.session_state["ai_log"]:
+        st.markdown("**Try:**")
+        qa, qb, qc, qd = st.columns(4)
+        if qa.button("📅 Study plan", width="stretch"):
+            st.session_state["ai_pending"] = "Make me a weekly study plan and save it"
+        if qb.button("📈 How am I doing?", width="stretch"):
+            st.session_state["ai_pending"] = "How am I doing?"
+        if qc.button("🎯 My GPA", width="stretch"):
+            st.session_state["ai_pending"] = "What's my GPA?"
+        if qd.button("💡 How to improve", width="stretch"):
+            st.session_state["ai_pending"] = "How can I improve?"
+    typed = st.chat_input("Type a command, or 'help'…", max_chars=ai.MAX_USER_CHARS)
+    prompt = typed or st.session_state.pop("ai_pending", None)
+    if prompt:
+        res = None
+        if not use_claude:
+            res = helper.handle(user, prompt, TAB_MAP)
+            res["usage"] = (0, 0)
+        else:
             turns = sum(1 for m in st.session_state["ai_log"] if m["role"] == "user")
             rate_err = ai.check_rate(user) if turns < ai.MAX_TURNS_PER_CHAT else None
             if turns >= ai.MAX_TURNS_PER_CHAT:
@@ -597,133 +607,26 @@ with tab_ai:
             else:
                 with st.spinner("Thinking…"):
                     res = ai.chat_turn(_ai_client(api_key), ai_model, user, st.session_state["ai_msgs"], prompt, TAB_MAP)
-                if res["error"]:
-                    st.error(res["error"])
-                else:
-                    st.session_state["ai_log"] += [{"role": "user", "text": prompt},
-                                                   {"role": "assistant", "text": res["text"], "actions": res["actions"]}]
-                    st.session_state["ai_usage"][0] += res["usage"][0]
-                    st.session_state["ai_usage"][1] += res["usage"][1]
-                    if res["nav"]:
-                        st.session_state["goto"] = res["nav"]
-                    st.rerun()
-        if st.session_state["ai_log"]:
-            u_in, u_out = st.session_state["ai_usage"]
-            n1, n2 = st.columns([3, 1], vertical_alignment="center")
-            n1.caption(f"Model: {ai_model} · tokens used this chat: {u_in:,} in / {u_out:,} out")
-            if n2.button("New chat", width="stretch"):
-                for k in ("ai_msgs", "ai_log", "ai_usage"):
-                    st.session_state.pop(k, None)
+        if res is not None:
+            if res["error"]:
+                st.error(res["error"])
+            else:
+                st.session_state["ai_log"] += [{"role": "user", "text": prompt},
+                                               {"role": "assistant", "text": res["text"], "actions": res["actions"]}]
+                st.session_state["ai_usage"][0] += res["usage"][0]
+                st.session_state["ai_usage"][1] += res["usage"][1]
+                if res["nav"]:
+                    st.session_state["goto"] = res["nav"]
                 st.rerun()
-
-
-# ---- GPA tab
-with tab_gpa:
-    st.markdown("#### GPA calculator")
-    gmode = st.radio("Enter grades as", ["Letter grades", "Percentages"], horizontal=True, key="gpa_mode")
-    st.caption("Uses your GPA scale. Weighted GPA adds each course level's bonus (no bonus for a 0-point grade). "
-               "Leave a grade empty for courses still in progress. Change the scale, bonuses and "
-               "percentage cut-offs in the Grading rules tab."
-               + (" Percentages are converted to letters using your cut-offs." if gmode == "Percentages" else ""))
-    n = max(len(my["current"]), 4)
-    names = (my["current"] + [""] * n)[:n]
-    level_names = [l["level"] for l in gpa_levels]
-    if gmode == "Letter grades":
-        gdf = pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n,
-                            "Level": [level_names[0]] * n})
-        gcfg = {"Grade": st.column_config.SelectboxColumn(options=[g["grade"] for g in gpa_scale])}
-    else:
-        gdf = pd.DataFrame({"Course": names, "Percent": [None] * n, "Credits": [1.0] * n,
-                            "Level": [level_names[0]] * n})
-        gcfg = {"Percent": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)}
-    with st.form("gpa"):
-        gtable = st.data_editor(
-            gdf, num_rows="dynamic", width="stretch", hide_index=True,
-            column_config={**gcfg,
-                           "Credits": st.column_config.NumberColumn(min_value=0.0, step=0.5),
-                           "Level": st.column_config.SelectboxColumn(options=level_names, required=True)},
-        )
-        calc = st.form_submit_button("Calculate GPA", type="primary", width="stretch")
-    if calc:
-        g, gerr = gpa_lib.compute_gpa(gtable.to_dict("records"), gpa_scale, gpa_levels)
-        if gerr:
-            st.error(gerr)
-        else:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Unweighted GPA", f"{g['unweighted']:.2f}")
-            m2.metric("Weighted GPA", f"{g['weighted']:.2f}")
-            m3.metric("Credits counted", f"{g['credits']:g}")
-            st.dataframe(pd.DataFrame(g["rows"]), width="stretch", hide_index=True)
-
-
-# ---- Grading rules tab
-with tab_rules:
-    st.markdown("#### Your grading rules")
-    st.caption("These decide the grade letters and the pass/fail result on your report cards. "
-               "Edit the table, add or delete rows, then save.")
-    with st.form("rules"):
-        edited = st.data_editor(
-            pd.DataFrame({"Grade": [g["grade"] for g in scale],
-                          "Minimum %": [g["min"] for g in scale],
-                          "Remark": [g["remark"] for g in scale]}),
-            num_rows="dynamic", width="stretch", hide_index=True,
-            column_config={"Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)},
-        )
-        c1, c2 = st.columns(2)
-        ps = c1.number_input("Pass mark per subject (%)", 0.0, 100.0, float(rules["pass_subject"]), 0.5)
-        po = c2.number_input("Pass mark overall (%)", 0.0, 100.0, float(rules["pass_overall"]), 0.5)
-        req = st.checkbox("Must pass every subject to pass overall", value=rules["require_all"])
-        save_rules = st.form_submit_button("Save grading rules", type="primary", width="stretch")
-    if save_rules:
-        new_scale, serr = grading.clean_scale(
-            [{"grade": r["Grade"], "min": r["Minimum %"], "remark": r["Remark"]}
-             for r in edited.to_dict("records")])
-        new_rules, rerr = grading.clean_rules(ps, po, req)
-        if serr or rerr:
-            st.error(serr or rerr)
-        else:
-            prefs_db.save(user, new_scale, new_rules)
-            st.toast("Grading rules saved.")
+    if st.session_state["ai_log"]:
+        n1, n2 = st.columns([3, 1], vertical_alignment="center")
+        if use_claude:
+            u_in, u_out = st.session_state["ai_usage"]
+            n1.caption(f"Model: {ai_model} · tokens used this chat: {u_in:,} in / {u_out:,} out")
+        if n2.button("New chat", width="stretch"):
+            for k in ("ai_msgs", "ai_log", "ai_usage"):
+                st.session_state.pop(k, None)
             st.rerun()
-    if st.button("Reset to defaults", width="stretch"):
-        prefs_db.reset(user)
-        st.rerun()
-    st.caption("The lowest grade must start at 0% so every score gets a grade.")
-
-    st.divider()
-    st.markdown("#### GPA scale")
-    st.caption("Edit the points for each grade, the lowest percentage that earns it (used when you enter "
-               "percentages in the GPA tab; leave empty if it should never come from a percentage), and the "
-               "weighted-GPA bonus for each course level. One grade must start at 0%.")
-    with st.form("gpa_rules"):
-        gs = st.data_editor(
-            pd.DataFrame({"Grade": [g["grade"] for g in gpa_scale], "Points": [g["points"] for g in gpa_scale],
-                          "Minimum %": [g["min"] for g in gpa_scale]}),
-            num_rows="dynamic", width="stretch", hide_index=True, key="gs_editor",
-            column_config={"Points": st.column_config.NumberColumn(min_value=0.0, max_value=10.0, step=0.1),
-                           "Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)},
-        )
-        st.markdown("**Course levels (weighted bonus)**")
-        lv = st.data_editor(
-            pd.DataFrame({"Level": [l["level"] for l in gpa_levels], "Bonus": [l["bonus"] for l in gpa_levels]}),
-            num_rows="dynamic", width="stretch", hide_index=True, key="lv_editor",
-            column_config={"Bonus": st.column_config.NumberColumn(min_value=0.0, max_value=5.0, step=0.1)},
-        )
-        save_gpa_rules = st.form_submit_button("Save GPA scale", type="primary", width="stretch")
-    if save_gpa_rules:
-        new_gs, gerr1 = gpa_lib.clean_scale(
-            [{"grade": r["Grade"], "points": r["Points"], "min": r["Minimum %"]} for r in gs.to_dict("records")])
-        new_lv, gerr2 = gpa_lib.clean_levels(
-            [{"level": r["Level"], "bonus": r["Bonus"]} for r in lv.to_dict("records")])
-        if gerr1 or gerr2:
-            st.error(gerr1 or gerr2)
-        else:
-            prefs_db.save_gpa(user, new_gs, new_lv)
-            st.toast("GPA scale saved.")
-            st.rerun()
-    if st.button("Reset GPA scale to defaults", width="stretch"):
-        prefs_db.reset_gpa(user)
-        st.rerun()
 
 
 # ---- Account tab

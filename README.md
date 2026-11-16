@@ -15,5 +15,7 @@ Grades: A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <4
 ## Admin (this device only)
 Run `python3 make_admin.py` on your own computer to make an account the admin. It writes a git-ignored `.admin_device` file; with `streamlit run streamlit_app.py` that account then gets an **Admin** tab (list accounts, delete one, delete all others). The deployed app never has this file, so nobody online can be an admin.
 
-## AI assistant
-The Assistant tab uses the Claude API (`ANTHROPIC_API_KEY` in Secrets; optional `anthropic_model`, default `claude-opus-5-5`). It can read your classes, recorded grades and files, record grades, add or move classes, calculate report cards and GPA, change your grading rules, save study plans as notes, and switch tabs. It cannot change passwords or emails or delete accounts or files. Your messages, grades and any file it reads are sent to Anthropic. Usage is billed to the API key's owner; each user is limited to 30 assistant messages per hour.
+## Study assistant
+The Assistant tab works for everyone with **no API key and no cost**: it's a built-in helper that understands short commands (`I got 45/50 in math`, `how am I doing?`, `study plan 12 hours and save it`, `what's my GPA?`, `add classes art, music`, `go to files`; type `help`). It uses plain pattern matching and your recorded grades, so nothing leaves the app.
+
+Optional: if the app owner adds `ANTHROPIC_API_KEY` to Secrets (see `.streamlit/secrets.toml.example`), a switch appears to use Claude instead. That mode is billed to the key's owner, sends messages and grades to Anthropic, and is limited to 30 messages per hour per user. Without a key it never runs and never costs anything.
