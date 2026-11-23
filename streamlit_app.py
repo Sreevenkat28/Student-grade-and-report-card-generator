@@ -15,6 +15,7 @@ import auth
 import classes_db as cdb
 import files_db
 import helper
+import overview
 import gpa as gpa_lib
 import grading
 import prefs_db
@@ -138,6 +139,9 @@ st.markdown(
       .stats div {text-align:center; padding:.5rem .2rem; border-radius:14px; background:rgba(124,77,255,.1);
         border:1px solid rgba(124,77,255,.25); font-size:.78rem; opacity:.95;}
       .stats b {display:block; font-size:1.2rem;}
+      .sumbar {display:flex; flex-wrap:wrap; justify-content:center; gap:.5rem; margin:-.4rem 0 1rem;}
+      .sumbar span {padding:.3rem .8rem; border-radius:999px; font-size:.9rem; background:rgba(124,77,255,.12);
+        border:1px solid rgba(124,77,255,.3);} .sumbar.hint span {background:rgba(255,179,0,.14); border-color:rgba(255,179,0,.4);}
       .badge {display:inline-block; font-size:.7rem; font-weight:700; padding:.05rem .5rem; border-radius:999px; margin-left:.4rem;
         background:#ffb300; color:#3b2a00; vertical-align:middle;}
     </style>
@@ -519,12 +523,13 @@ _inject_theme(st.session_state["theme_mode"], UI["animations"] and UI["transitio
 head_l, _head_gap, head_theme = st.columns([2, 3, 1], vertical_alignment="center")
 with head_l.popover(f"👤 {user}", width="stretch"):
     _email = auth.get_email(user) or "—"
-    _cls, _grades, (_nfiles, _used) = cdb.list_classes(user), cdb.list_grades(user), files_db.usage(user)
+    _cls, _sum, (_nfiles, _used) = cdb.list_classes(user), overview.summary(user), files_db.usage(user)
     _badge = '<span class="badge">ADMIN</span>' if auth.is_admin(user) else ""
+    _gpa_txt = "—" if _sum["gpa"] is None else "%.2f" % _sum["gpa"]
     st.markdown(f'<div class="prof"><div class="avatar">{html.escape(user[:1].upper())}</div>'
                 f'<div><b>{html.escape(user)}</b>{_badge}<br><span>{html.escape(_email)}</span></div></div>'
                 f'<div class="stats"><div title="Classes you are taking now"><b>{len(_cls["current"])}</b>current classes</div>'
-                f'<div title="Test and assignment scores you have recorded"><b>{len(_grades)}</b>grades</div>'
+                f'<div title="Unweighted GPA from your My grades tab"><b>{_gpa_txt}</b>GPA</div>'
                 f'<div title="Files stored in your Files tab"><b>{_nfiles}</b>files</div></div>',
                 unsafe_allow_html=True)
     if _cls["previous"]:
@@ -552,17 +557,95 @@ st.title("🎓 Grade & Report Card Generator")
 st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fail result</p>',
             unsafe_allow_html=True)
 
+CT = overview.class_table(user)
+SUM = overview.summary(user)
+CLS_BY = {r["name"].lower(): r for r in CT}
+if SUM["graded"]:
+    _bits = [f'<span title="Average of your class percentages">📊 Average <b>{SUM["avg_percent"]:g}%</b></span>'] if SUM["avg_percent"] is not None else []
+    if SUM["gpa"] is not None:
+        _bits.append(f'<span title="Unweighted GPA on your GPA scale">🎯 GPA <b>{SUM["gpa"]:.2f}</b></span>')
+    _bits.append(f'<span title="Classes that have a grade">✅ <b>{SUM["graded"]}/{SUM["total"]}</b> classes graded</span>')
+    st.markdown('<div class="sumbar">' + "".join(_bits) + '</div>', unsafe_allow_html=True)
+else:
+    st.markdown('<div class="sumbar hint"><span>👋 Start in <b>✏️ My grades</b>: enter a grade for each class and the whole app fills in.</span></div>',
+                unsafe_allow_html=True)
+
 IS_ADMIN = auth.is_admin(user)
-TAB_NAMES = ["📝 Report card", "🎯 GPA", "⚙️ Grading rules", "📚 My classes", "📁 Files", "🤖 Assistant", "👤 Account"]
+TAB_NAMES = ["✏️ My grades", "📝 Report card", "🎯 GPA", "⚙️ Grading rules", "📚 My classes", "📁 Files", "🤖 Assistant", "👤 Account"]
 if IS_ADMIN:
     TAB_NAMES.append("🛠 Admin")
 _tabs = st.tabs(TAB_NAMES)
-tab_report, tab_gpa, tab_rules, tab_classes, tab_files, tab_ai, tab_account = _tabs[:7]
+tab_grades, tab_report, tab_gpa, tab_rules, tab_classes, tab_files, tab_ai, tab_account = _tabs[:8]
 if IS_ADMIN:
-    tab_admin = _tabs[7]
+    tab_admin = _tabs[8]
 scale, rules = prefs_db.load(user)
 gpa_scale, gpa_levels = prefs_db.load_gpa(user)
 my = cdb.list_classes(user)
+
+# ---- My grades tab (the one place you type grades; every other tab reads from it)
+with tab_grades:
+    st.markdown("#### ✏️ My grades")
+    st.caption("Type your grade for each class: a **letter** (A, B+) or a **percentage** (87 or 87%). Your Report card, "
+               "GPA, summary bar, My classes, assistant and profile all update from this, all at once.")
+    if not CT:
+        st.info("You have no classes yet. Add them in the **📚 My classes** tab first, then come back and enter a grade for each.")
+    else:
+        _lvl_names = [l["level"] for l in gpa_levels]
+        with st.form("my_grades"):
+            _edited = st.data_editor(
+                pd.DataFrame({"Class": [r["name"] for r in CT], "Status": [r["status"].title() for r in CT],
+                              "Grade": [r["entered_text"] for r in CT], "Credits": [r["credits"] for r in CT],
+                              "Level": [r["level"] for r in CT]}),
+                num_rows="fixed", hide_index=True, width="stretch", disabled=["Class", "Status"],
+                column_config={
+                    "Class": st.column_config.TextColumn(help="Add or remove classes in the My classes tab."),
+                    "Status": st.column_config.TextColumn(help="Current = taking now. Previous = finished."),
+                    "Grade": st.column_config.TextColumn(help="Your grade for this class: a letter from your GPA scale (A, B+...) "
+                                                              "or a percentage (87 or 87%). Leave empty if you have no grade yet."),
+                    "Credits": st.column_config.NumberColumn(min_value=0.5, max_value=20.0, step=0.5,
+                                                             help="How much the class counts in your GPA. A full-year class is usually 1, a semester 0.5."),
+                    "Level": st.column_config.SelectboxColumn(options=_lvl_names, required=True,
+                                                              help="Regular, Honors, AP / IB... harder levels add bonus points to the weighted GPA."),
+                })
+            _save_g = st.form_submit_button("Save grades", type="primary", width="stretch",
+                                            help="Updates every tab at once.")
+        if _save_g:
+            _errs, _plan = [], []
+            for rec in _edited.to_dict("records"):
+                _p, _l, _e = overview.parse_grade(rec["Grade"], gpa_scale)
+                if _e:
+                    _errs.append(f"**{rec['Class']}**: {_e}")
+                else:
+                    _plan.append((rec, _p, _l))
+            if _errs:
+                st.error("  \n".join(_errs))
+            else:
+                for rec, _p, _l in _plan:
+                    if _p is None and not _l:
+                        cdb.delete_final(user, rec["Class"])
+                    else:
+                        _cr = rec["Credits"] if rec["Credits"] == rec["Credits"] and rec["Credits"] else 1.0
+                        cdb.set_final(user, rec["Class"], _p, _l, _cr, rec["Level"] if rec["Level"] in _lvl_names else None)
+                st.toast("Grades saved. Every tab is updated.")
+                st.rerun()
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Average", "—" if SUM["avg_percent"] is None else f"{SUM['avg_percent']:g}%",
+                  help="Average of the percentages of all your graded classes.")
+        s2.metric("GPA", "—" if SUM["gpa"] is None else f"{SUM['gpa']:.2f}",
+                  help="Unweighted GPA on your GPA scale, across all graded classes (current and previous).")
+        s3.metric("Weighted GPA", "—" if SUM["gpa_weighted"] is None else f"{SUM['gpa_weighted']:.2f}",
+                  help="Like GPA, but Honors / AP classes add bonus points.")
+        st.markdown("##### How your grades are used")
+        st.dataframe(pd.DataFrame([{
+            "Class": r["name"], "Your grade": r["entered_text"] or "—",
+            "Percent": "—" if r["percent"] is None else f"{r['percent']:g}%",
+            "GPA letter": r["gpa_letter"] or "—",
+            "Report card grade": "—" if r["percent"] is None else (r["entered_letter"] or grading.grade_for(scale, r["percent"])[0]),
+            "From": {"entered": "your grade", "tests": "test average"}.get(r["source"], "—"),
+        } for r in CT]), width="stretch", hide_index=True)
+        st.caption("A letter is turned into a percentage with your GPA scale (the lowest % that earns it), and a percentage "
+                   "into a letter the same way. If a class has no grade here, the average of its recorded test scores is used.")
+
 
 # ---- Report card tab
 def _render_report(student, res, mode):
@@ -624,13 +707,18 @@ with tab_report:
         exam = c2.text_input("Exam", help="Optional title shown under REPORT CARD, for example Final Term 2026.")
 
         st.markdown("##### Subject marks")
-        subjects = my["current"] or DEFAULT_SUBJECTS
-        if my["current"]:
-            st.caption("Pre-filled from your current classes. Add or delete rows as needed. Hover a column heading for help.")
+        _pf = overview.report_prefill(user)
+        subjects = [n for n, _p in _pf] or DEFAULT_SUBJECTS
+        _marks = [p for _n, p in _pf] or [None] * len(subjects)
+        if any(p is not None for p in _marks):
+            st.caption("Marks are filled in from your **✏️ My grades** tab (as a percentage out of 100). Change a grade there "
+                       "and this updates. You can still edit the table. Hover a column heading for help.")
+        elif my["current"]:
+            st.caption("Pre-filled with your current classes. Enter your grades in the **✏️ My grades** tab to fill in the marks. Hover a column heading for help.")
         else:
             st.caption("Add or delete rows as needed. Hover a column heading for help. Add your classes in the My classes tab to pre-fill these.")
         table = st.data_editor(
-            pd.DataFrame({"Subject": subjects, "Marks": [None] * len(subjects),
+            pd.DataFrame({"Subject": subjects, "Marks": _marks,
                           "Max": [100.0] * len(subjects)}),
             num_rows="dynamic", width="stretch", hide_index=True,
             column_config={
@@ -651,6 +739,7 @@ with tab_report:
                 st.error(err)
                 st.session_state.pop("last_report", None)
             else:
+                res = overview.apply_entered_letters(user, res)
                 st.session_state["last_report"] = (
                     {"name": name, "roll": roll, "cls": cls, "exam": exam,
                      "date": f"{date.today():%d %b %Y}"}, res)
@@ -681,7 +770,10 @@ def _class_list(title, status, empty_msg):
             st.caption(empty_msg)
         for n in my[status]:
             a, b, c = st.columns([5, 3, 1], vertical_alignment="center")
-            a.markdown(f"<span class='chip'>{n}</span>", unsafe_allow_html=True)
+            _r = CLS_BY.get(n.lower())
+            _g = f" · {_r['gpa_letter'] or ''} {_r['percent']:g}%" if _r and _r["percent"] is not None else (
+                f" · {_r['gpa_letter']}" if _r and _r["gpa_letter"] else "")
+            a.markdown(f"<span class='chip'>{html.escape(n)}{html.escape(_g)}</span>", unsafe_allow_html=True)
             b.button(move_label, key=f"mv_{status}_{n}", on_click=_move, args=(n, other),
                      width="stretch", help=f"Move to {other} classes")
             c.button("🗑", key=f"rm_{status}_{n}", on_click=_delete, args=(n,),
@@ -910,16 +1002,22 @@ with tab_gpa:
                "Leave a grade empty for courses still in progress. Hover a column heading for help. Change the scale, bonuses and "
                "percentage cut-offs in the Grading rules tab."
                + (" Percentages are converted to letters using your cut-offs." if gmode == "Percentages" else ""))
-    n = max(len(my["current"]), 4)
-    names = (my["current"] + [""] * n)[:n]
     level_names = [l["level"] for l in gpa_levels]
+    _pre = overview.gpa_prefill(user)
+    n = max(len(_pre), 4)
+    _pad = n - len(_pre)
+    names = [r["Course"] for r in _pre] + [""] * _pad
+    _credits = [r["Credits"] for r in _pre] + [1.0] * _pad
+    _levels = [r["Level"] for r in _pre] + [level_names[0]] * _pad
+    if _pre:
+        st.caption("Filled in from your **✏️ My grades** tab, so it updates whenever you change a grade there.")
     if gmode == "Letter grades":
-        gdf = pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n,
-                            "Level": [level_names[0]] * n})
+        gdf = pd.DataFrame({"Course": names, "Grade": [r["Grade"] for r in _pre] + [None] * _pad,
+                            "Credits": _credits, "Level": _levels})
         gcfg = {"Grade": st.column_config.SelectboxColumn(options=[g["grade"] for g in gpa_scale], help="The final letter grade. Leave empty if the course is not finished yet.")}
     else:
-        gdf = pd.DataFrame({"Course": names, "Percent": [None] * n, "Credits": [1.0] * n,
-                            "Level": [level_names[0]] * n})
+        gdf = pd.DataFrame({"Course": names, "Percent": [r["Percent"] for r in _pre] + [None] * _pad,
+                            "Credits": _credits, "Level": _levels})
         gcfg = {"Percent": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5, help="Final percentage (0-100). Converted to a letter using your GPA scale. Leave empty if not finished.")}
     with st.form("gpa"):
         gtable = st.data_editor(

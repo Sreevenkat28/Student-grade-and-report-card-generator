@@ -13,11 +13,15 @@ import classes_db as cdb
 import files_db
 import gpa as gpa_lib
 import grading
+import overview
 import prefs_db
 
 HELP = """Here's what I can do. Just tell me in plain words:
 
-**Grades & classes**
+**Your grades (feed every tab)**
+- `my math grade is B+` · `set physics grade to 87%` · `I have an A in art` · `clear my art grade`
+
+**Test scores & classes**
 - `I got 45/50 in math` · `record 85% in english` · `undo my last grade` · `list my grades`
 - `add classes physics, art` · `add class history to previous` · `move art to previous` · `finished math`
 - `remove class art` · `delete all my grades` *(I'll ask you to confirm)*
@@ -67,11 +71,8 @@ def _band(avg):
 
 
 def _averages(user):
-    """[(class, avg_percent, count)] for classes with recorded grades, weakest first."""
-    per = {}
-    for g in cdb.list_grades(user):
-        per.setdefault(g["class"].lower(), [g["class"], []])[1].append(g["percent"])
-    out = [(name, round(sum(p) / len(p), 1), len(p)) for name, p in per.values()]
+    """[(class, percent, count)] for classes that have a grade, weakest first (typed grade, else test average)."""
+    out = [(r["name"], round(r["percent"], 1), r["n"]) for r in overview.class_table(user) if r["percent"] is not None]
     return sorted(out, key=lambda t: t[1])
 
 
@@ -148,6 +149,29 @@ def _move(user, name, status, tabs, actions):
         return f'I couldn\'t find a class called "{name.strip()}". Check the My classes tab for the exact name.'
     data, err = _run(user, "move_class", {"name": cls, "status": status}, tabs, actions)
     return f"I couldn't move it: {data.get('error')}" if err else f"Moved **{cls}** to your {status} classes."
+
+
+def _set_class_grade(user, cls_raw, grade_text, tabs, actions):
+    cls_raw = cls_raw.strip(" .,!?")
+    cls = _match_class(user, cls_raw) or _cap(cls_raw)
+    data, err = _run(user, "set_class_grade", {"class_name": cls, "grade": grade_text.strip(" .,!?")}, tabs, actions)
+    if err:
+        return f"I couldn't set that: {data.get('error')}"
+    ov, shown = data["overall"], data["entered"]
+    about = f" (about {data['percent']:g}%)" if data.get("percent") is not None and not shown.endswith("%") else ""
+    extra = " I added that class to your current classes." if data.get("class_was_created") else ""
+    gpa = f", GPA **{ov['gpa']:.2f}**" if ov.get("gpa") is not None else ""
+    avg = f" Overall average is now **{ov['avg_percent']:g}%**{gpa}." if ov.get("avg_percent") is not None else ""
+    return f"Set **{cls}** to **{shown}**{about}.{extra}{avg} Your Report card, GPA and summary are updated."
+
+
+def _clear_class_grade(user, cls_raw, tabs, actions):
+    cls = _match_class(user, cls_raw.strip(" .,!?"))
+    if not cls:
+        return f'I couldn\'t find a class called "{cls_raw.strip()}".'
+    cdb.delete_final(user, cls)
+    actions.append(f"✅ Cleared the grade for {cls}")
+    return f"Cleared the grade for **{cls}**."
 
 
 def _list_classes(user):
@@ -272,17 +296,17 @@ def _gpa_from_tokens(user, body):
 
 
 def _gpa(user):
-    avgs = _averages(user)
-    if not avgs:
-        return "Record some grades first (for example `I got 45/50 in math`) and I'll work out your GPA."
-    gs, lv = prefs_db.load_gpa(user)
-    res, err = gpa_lib.compute_gpa([{"Course": n, "Percent": a, "Credits": 1.0, "Level": lv[0]["level"]} for n, a, _c in avgs], gs, lv)
-    if err:
-        return f"I couldn't work that out: {err}"
-    table = _table([(r["Course"], f"{r['Percent']:g}%", r["Grade"], f"{r['Unweighted']:g}") for r in res["rows"]],
-                   ["Class", "Average", "Grade", "Points"])
-    return (f"**Unweighted GPA: {res['unweighted']:.2f}**\n\n{table}\n\nI used each class's average percent, 1 credit each, on your GPA scale. "
-            "For weighted GPA or different credits, use the GPA tab.")
+    rows = [r for r in overview.class_table(user) if r["gpa_letter"]]
+    if not rows:
+        return ("You haven't entered any grades yet. Type them in the **My grades** tab, or say `my math grade is B+`.")
+    sm = overview.summary(user)
+    gs, _lv = prefs_db.load_gpa(user)
+    pts = {g["grade"].upper(): g["points"] for g in gs}
+    table = _table([(r["name"], r["entered_text"] or (f"{r['percent']:g}%" if r["percent"] is not None else "—"),
+                     r["gpa_letter"], f"{pts.get(r['gpa_letter'].upper(), 0):g}", f"{r['credits']:g}") for r in rows],
+                   ["Class", "Grade", "Letter", "Points", "Credits"])
+    return (f"**Unweighted GPA: {sm['gpa']:.2f}** · weighted {sm['gpa_weighted']:.2f}\n\n{table}\n\n"
+            "Calculated from the grades in your **My grades** tab on your GPA scale.")
 
 
 def _report(user, m, raw, out):
@@ -295,14 +319,19 @@ def _report(user, m, raw, out):
         if not im:
             return "I couldn't read the subjects. Try: `make a report card for Sam: math 80/100, science 45/50`."
         items.append({"Subject": _cap(im.group("s")), "Marks": float(im.group("m")), "Max": float(im.group("x") or 100)})
+    from_saved = False
     if not items:
-        items = [{"Subject": n, "Marks": a, "Max": 100.0} for n, a, _c in _averages(user)]
+        items = [{"Subject": n, "Marks": p, "Max": 100.0} for n, p in overview.report_prefill(user) if p is not None]
+        from_saved = True
         if not items:
-            return "Give me some subjects, like `make a report card: math 80/100, science 45/50`, or record grades first."
+            return ("Give me some subjects, like `make a report card: math 80/100, science 45/50`, "
+                    "or enter your grades in the **My grades** tab first.")
     scale, rules = prefs_db.load(user)
     res, err = grading.compute_result(items, scale, rules)
     if err:
         return f"I couldn't make the report card: {err}"
+    if from_saved:
+        res = overview.apply_entered_letters(user, res)
     out["report"] = ({"name": name, "roll": "", "cls": "", "exam": "Report card", "date": f"{date.today():%d %b %Y}"}, res)
     out["nav"] = out["tabs"]["Report card"]
     out["actions"].append("✅ Built a report card and opened it")
@@ -491,6 +520,13 @@ def _tab_for(text, tabs):
     return None
 
 
+LETTER = r"[a-f][+-]?"
+SET_GRADE_A = re.compile(r"^(?:please\s+)?(?:set|change|update|make)\s+(?:my\s+)?(?P<c>.+?)\s+grade\s+(?:to|as|=)\s+(?P<g>.+)$")
+SET_GRADE_B = re.compile(r"^(?:my\s+)?(?P<c>.+?)\s+grade\s+(?:is|=|now)\s+(?:an?\s+)?(?P<g>.+)$")
+SET_GRADE_C = re.compile(rf"^i\s+(?:have|got|get|am getting|'m getting)\s+(?:an?\s+)?(?P<g>{LETTER})\s+(?:in|for|on)\s+(?:my\s+)?(?P<c>.+)$")
+SET_GRADE_D = re.compile(rf"^i\s+(?:have|got|am at|'m at)\s+(?:an?\s+)?(?P<g>{NUM}\s*%)\s+(?:in|for|on)\s+(?:my\s+)?(?P<c>.+?)\s+(?:overall|right now|currently|now)$")
+CLEAR_GRADE = re.compile(r"^(?:please\s+)?(?:clear|remove|reset)\s+(?:my\s+)?(?P<c>.+?)\s+grade$")
+
 GOTO = re.compile(r"^(?:please\s+)?(?:go to|open|show|take me to|switch to|navigate to|view)\s+(?P<t>.+)$")
 REPORT = re.compile(r"^(?:please\s+)?(?:make|create|generate|build|calculate|do)\s+(?:me\s+)?(?:a\s+|my\s+)?report\s*card"
                     r"(?:\s+for\s+(?P<name>[^:]{1,40}?)\s*:)?\s*[:\-]?\s*(?P<b>.*)$", re.I)
@@ -609,6 +645,11 @@ def handle(user, text, tabs, state=None):
         out["text"] = _set_grade_cutoff(user, m.group("g"), _num(m), actions)
     elif (txt := _pass_rules(user, t, actions)):
         out["text"] = txt
+    elif (m := CLEAR_GRADE.match(t)):
+        out["text"] = _clear_class_grade(user, m.group("c"), tabs, actions)
+    elif (m := SET_GRADE_A.match(t)) or (m := SET_GRADE_D.match(t)) or (m := SET_GRADE_C.match(t)) \
+            or ((m := SET_GRADE_B.match(t)) and not re.search(r"\b(?:pass|cut|minimum|point)", t)):
+        out["text"] = _set_class_grade(user, m.group("c"), m.group("g"), tabs, actions)
     elif (m := RECORD.match(t)):
         out["text"] = _record(user, m, tabs, actions)
     elif (m := ADD_CLASS.match(raw)):

@@ -141,3 +141,47 @@ def list_grades(username: str):
 def delete_grade(username: str, grade_id: int):
     with _grades_conn() as c:
         c.execute("DELETE FROM grades WHERE username = ? AND id = ?", (username, int(grade_id)))
+
+
+# ---------------------------------------------------------------- one final grade per class
+def _final_conn():
+    conn = _conn()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS final_grades (username TEXT NOT NULL, class TEXT NOT NULL COLLATE NOCASE, "
+        "percent REAL, letter TEXT, credits REAL NOT NULL DEFAULT 1, level TEXT, "
+        "PRIMARY KEY (username, class))"
+    )
+    return conn
+
+
+def set_final(username: str, class_name: str, percent=None, letter=None, credits=1.0, level=None):
+    """Save the grade for one class: a percentage OR a letter (the caller validates). Returns (ok, message)."""
+    name = " ".join(str(class_name or "").split())[:MAX_NAME]
+    if not name:
+        return False, "Pick a class."
+    if percent is None and not letter:
+        return False, "Enter a letter or a percentage."
+    try:
+        credits = float(credits if credits is not None else 1.0)
+    except (TypeError, ValueError):
+        return False, "Credits must be a number."
+    if not 0 < credits <= 20:
+        return False, "Credits must be greater than 0 and at most 20."
+    with _final_conn() as c:
+        c.execute("INSERT OR REPLACE INTO final_grades VALUES (?, ?, ?, ?, ?, ?)",
+                  (username, name, None if percent is None else float(percent), letter or None, credits,
+                   (level or None)))
+    return True, "Grade saved."
+
+
+def get_finals(username: str):
+    """{lowercase class name: {class, percent, letter, credits, level}}"""
+    with _final_conn() as c:
+        rows = c.execute("SELECT class, percent, letter, credits, level FROM final_grades WHERE username = ?",
+                         (username,)).fetchall()
+    return {r[0].lower(): {"class": r[0], "percent": r[1], "letter": r[2], "credits": r[3], "level": r[4]} for r in rows}
+
+
+def delete_final(username: str, class_name: str):
+    with _final_conn() as c:
+        c.execute("DELETE FROM final_grades WHERE username = ? AND class = ? COLLATE NOCASE", (username, class_name))

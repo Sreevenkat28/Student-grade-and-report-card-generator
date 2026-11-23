@@ -12,6 +12,7 @@ import classes_db as cdb
 import files_db
 import gpa as gpa_lib
 import grading
+import overview
 import prefs_db
 
 DEFAULT_MODEL = "claude-opus-5-5"
@@ -60,6 +61,12 @@ TOOLS = [
     {"name": "remove_class", "description": "Remove a class from the list. Destructive: only call with confirmed=true "
      "after the user explicitly agreed.",
      "input_schema": _s({"name": {"type": "string"}, "confirmed": {"type": "boolean"}}, ["name", "confirmed"])},
+    {"name": "set_class_grade", "description": "Set the student's overall grade for one class: a letter (like B+) or a "
+     "percentage (like 87 or 87%). Every tab (report card, GPA, summary) updates from it. Adds the class to current "
+     "classes if it doesn't exist. Pass an empty grade to clear it.",
+     "input_schema": _s({"class_name": {"type": "string"}, "grade": {"type": "string", "description": "e.g. 'B+' or '87%'"},
+                         "credits": {"type": "number", "description": "Default 1"},
+                         "level": {"type": "string", "description": "Course level, e.g. Honors"}}, ["class_name", "grade"])},
     {"name": "record_grade", "description": "Save one score (test, quiz, assignment, exam) for a class. Adds the class "
      "to current classes if it doesn't exist yet.",
      "input_schema": _s({"class_name": {"type": "string"}, "marks": {"type": "number"},
@@ -92,7 +99,7 @@ TOOLS = [
     {"name": "save_note", "description": "Save text (e.g. a study plan) as a .md file in the student's Files tab.",
      "input_schema": _s({"title": {"type": "string"}, "content": {"type": "string"}}, ["title", "content"])},
     {"name": "go_to_tab", "description": "Switch the app to a tab so the student can see something.",
-     "input_schema": _s({"tab": {"type": "string", "enum": ["Report card", "GPA", "Grading rules", "My classes",
+     "input_schema": _s({"tab": {"type": "string", "enum": ["My grades", "Report card", "GPA", "Grading rules", "My classes",
                                                            "Files", "Assistant", "Account"]}}, ["tab"])},
 ]
 
@@ -118,6 +125,10 @@ def _overview(user, _args, _ctx):
                 for v in per.values()]
     return {
         "current_classes": my["current"], "previous_classes": my["previous"],
+        "class_grades": [{"class": r["name"], "status": r["status"], "grade_entered": r["entered_text"] or None,
+                          "percent": r["percent"], "gpa_letter": r["gpa_letter"], "credits": r["credits"],
+                          "level": r["level"], "source": r["source"]} for r in overview.class_table(user)],
+        "overall": overview.summary(user),
         "recorded_grades_latest_first": [{"class": g["class"], "label": g["label"], "marks": g["marks"],
                                            "max": g["max"], "percent": g["percent"]} for g in grades[:100]],
         "class_averages": sorted(averages, key=lambda a: a["average_percent"]),
@@ -157,6 +168,37 @@ def _remove_class(user, a, _ctx):
         raise ValueError(f'No class named "{a.get("name")}".')
     cdb.remove_class(user, found)
     return {"removed": found}, f"Removed class {found}"
+
+
+def _set_class_grade(user, a, _ctx):
+    gs, lv = prefs_db.load_gpa(user)
+    percent, letter, err = overview.parse_grade(a.get("grade"), gs)
+    if err:
+        raise ValueError(err)
+    found, _ = _find_class(user, a.get("class_name"))
+    name = found or " ".join(str(a.get("class_name") or "").split())
+    if not name:
+        raise ValueError("Which class?")
+    if percent is None and not letter:  # empty grade clears it
+        cdb.delete_final(user, name)
+        return {"cleared": name}, f"Cleared the grade for {name}"
+    created = False
+    if not found:
+        created = bool(cdb.add_classes(user, [name], "current"))
+    level = a.get("level")
+    names = {l["level"].lower(): l["level"] for l in lv}
+    if level and str(level).lower() not in names:
+        raise ValueError("Unknown level. Your levels: " + ", ".join(l["level"] for l in lv))
+    cur = cdb.get_finals(user).get(name.lower())
+    ok, msg = cdb.set_final(user, name, percent, letter, a.get("credits") or (cur["credits"] if cur else 1.0),
+                            names[str(level).lower()] if level else (cur["level"] if cur else None))
+    if not ok:
+        raise ValueError(msg)
+    row = next(r for r in overview.class_table(user) if r["name"].lower() == name.lower())
+    shown = letter if letter else "%g%%" % percent
+    return {"class": name, "percent": row["percent"], "gpa_letter": row["gpa_letter"],
+            "class_was_created": created, "entered": shown, "overall": overview.summary(user)}, \
+        f"Set {name} to {shown}"
 
 
 def _record_grade(user, a, _ctx):
@@ -259,7 +301,7 @@ def _go_to_tab(_user, a, ctx):
     return {"switched_to": tab}, f"Opened the {tab} tab"
 
 
-_IMPL = {"get_overview": _overview, "add_classes": _add_classes, "move_class": _move_class,
+_IMPL = {"get_overview": _overview, "set_class_grade": _set_class_grade, "add_classes": _add_classes, "move_class": _move_class,
          "remove_class": _remove_class, "record_grade": _record_grade, "calculate_report_card": _report_card,
          "calculate_gpa": _gpa, "set_pass_rules": _set_pass_rules, "set_grade_scale": _set_scale,
          "list_files": _list_files, "read_file": _read_file, "save_note": _save_note, "go_to_tab": _go_to_tab}
