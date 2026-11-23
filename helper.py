@@ -2,7 +2,7 @@
 
 It can change most settings in the app when asked. Anything destructive (removing a class or file, deleting
 all grades) asks for a "yes" first. Account security (password, email, deleting the account) is never done
-from chat; it points the user to the Account tab instead.
+from chat; it opens the Settings window instead.
 """
 import json
 import re
@@ -40,7 +40,7 @@ HELP = """Here's what I can do. Just tell me in plain words:
 
 **Files & navigation**
 - `list my files` · `show file notes.txt` · `delete file notes.txt`
-- `go to GPA` · `open files` · `take me to the report card` · `log out` · `new chat`"""
+- `go to GPA` · `open files` · `take me to the report card` · `open settings` · `log out` · `new chat`"""
 
 TIPS = {
     "low": ["Re-learn the basics: go back to the first topics you lost track of and redo easy questions until they feel automatic.",
@@ -559,7 +559,7 @@ def handle(user, text, tabs, state=None):
     """
     state = state if state is not None else {}
     out = {"text": "", "actions": [], "nav": None, "error": None, "report": None, "set_state": {},
-           "clear": False, "logout": False, "tabs": tabs}
+           "clear": False, "logout": False, "open_settings": False, "tabs": tabs}
     raw = (text or "").strip()[:assistant.MAX_USER_CHARS]
     if not raw:
         out["error"] = "Type a message first."
@@ -576,6 +576,12 @@ def handle(user, text, tabs, state=None):
             out["text"] = "Okay, I won't do that."
             return out
         # anything else cancels the pending action and is handled as a new command
+
+    if re.fullmatch(r"(?:please\s+)?(?:open|show|go to|take me to|view)\s+(?:my\s+)?(?:account\s+)?(?:settings|preferences|account)(?:\s+(?:tab|page|window))?", t):
+        out["open_settings"] = True
+        actions.append("✅ Opened Settings")
+        out["text"] = "Opening **Settings**."
+        return out
 
     m = GOTO.match(t)
     if m and _tab_for(m.group("t"), tabs):
@@ -594,9 +600,10 @@ def handle(user, text, tabs, state=None):
         out["logout"] = True
         out["text"] = "Logging you out…"
     elif re.search(r"\b(change|reset|update|forgot)\b.*\b(password|email)\b|\bdelete\b.*\baccount\b", t):
-        out["nav"] = tabs["Account"]
+        out["open_settings"] = True
+        actions.append("✅ Opened Settings")
         out["text"] = ("For your security I don't change passwords, emails or accounts from chat. "
-                       "I've opened the **Account** tab, where you can do that safely.")
+                       "I've opened **Settings** (Account section), where you can do that safely.")
     elif re.search(r"\b(undo|remove|delete)\b.*\blast grade\b", t):
         out["text"] = _undo_grade(user, actions)
     elif re.search(r"\b(delete|remove|clear)\b.*\b(all|every)\b.*\bgrades\b", t):

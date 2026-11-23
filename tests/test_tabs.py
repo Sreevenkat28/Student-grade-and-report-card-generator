@@ -39,7 +39,7 @@ def test_no_exceptions_and_all_tabs_present():
     at = _app()
     assert not at.exception, at.exception
     labels = [t.label for t in at.tabs]
-    for want in ("My grades", "Report card", "GPA", "Grading rules", "My classes", "Files", "Assistant", "Account"):
+    for want in ("My grades", "Report card", "GPA", "Grading rules", "My classes", "Files", "Assistant"):
         assert any(want in l for l in labels), f"missing tab: {want}"
 
 
@@ -47,16 +47,22 @@ def test_every_tab_renders_its_key_widgets():
     at = _app()
     buttons = [b.label for b in at.button]
     for want in ("Save grades", "Generate report card", "Calculate GPA", "Save grading rules", "Save GPA scale",
-                 "Save files", "Change password"):
+                 "Save files", "Settings"):
         assert any(want in b for b in buttons), f"expected a '{want}' button"
     assert any(m.value for m in at.markdown if "Study assistant" in m.value)
-    assert [t for t in at.toggle], "profile-menu effect switches missing"
+    assert any(b.label.endswith("Settings") for b in at.button), "profile menu Settings button missing"
 
 
-def test_effect_switches_start_on():
+def test_effects_start_on_and_settings_window_has_the_switches():
     at = _app()
-    assert all(t.value for t in at.toggle if t.label[:4] in ("Anim", "Smoo", "Clic", "Hove", "Typi", "Fade")), \
-        [(t.label, t.value) for t in at.toggle]
+    assert all(at.session_state[f"ui_{k}"] for k in prefs_db.UI_KEYS), "effects should start switched on"
+    at.session_state["open_settings"] = True
+    at.run()
+    assert not at.exception, at.exception
+    labels = [t.label for t in at.toggle]
+    for want in ("Animations", "Smooth tab", "Click", "Hover", "Typing", "Fade-in"):
+        assert any(l.startswith(want) for l in labels), f"settings window missing the '{want}' switch: {labels}"
+    assert any(b.label == "Change password" for b in at.button), "settings window missing Change password"
 
 
 def test_one_set_of_grades_drives_every_tab():

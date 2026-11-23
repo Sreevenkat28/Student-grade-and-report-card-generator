@@ -259,7 +259,7 @@ def _clear_user_state():
     """Forget everything tied to the signed-in user (called on log out / account deletion)."""
     for k in list(st.session_state.keys()):
         if k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "ai_mode", "ai_state",
-                 "ai_stream", "ai_pending", "goto", "_pending_state", "theme_mode") or k.startswith("ui_"):
+                 "ai_stream", "ai_pending", "goto", "_pending_state", "theme_mode", "open_settings", "settings_tab", "settings_flash") or k.startswith("ui_"):
             st.session_state.pop(k, None)
 
 
@@ -535,16 +535,9 @@ with head_l.popover(f"👤 {user}", width="stretch"):
     if _cls["previous"]:
         st.caption(f"{len(_cls['previous'])} previous class(es)")
     st.divider()
-    st.markdown("**🌓 Appearance**")
-    st.radio("Theme", prefs_db.THEMES, horizontal=True, key="theme_mode", on_change=_save_theme,
-             label_visibility="collapsed", help="Light or dark look. Auto follows your device's own light/dark setting.")
-    st.markdown("**✨ Effects**")
-    st.caption("Turn animations on or off. Saved to your account.")
-    for _k in UI_KEYS:
-        st.toggle(prefs_db.UI_LABELS[_k], key=f"ui_{_k}", on_change=_save_ui, help=UI_HELP[_k])
-    st.divider()
-    if st.button("⚙️ Account settings", width="stretch", key="prof_account"):
-        st.session_state["goto"] = "👤 Account"
+    if st.button("⚙️ Settings", width="stretch", key="prof_settings",
+                 help="Light/dark mode, effects, preferences, password, your data and more."):
+        st.session_state["open_settings"] = True
         st.rerun()
     if st.button("Log out", width="stretch", key="prof_logout"):
         _clear_user_state()
@@ -570,14 +563,165 @@ else:
     st.markdown('<div class="sumbar hint"><span>👋 Start in <b>✏️ My grades</b>: enter a grade for each class and the whole app fills in.</span></div>',
                 unsafe_allow_html=True)
 
+# --------------------------------------------------------------------------- Settings window
+_ST_TABS = ["🎨 Appearance", "🎛 Preferences", "👤 Account", "🗂 Your data"]
+
+
+def _reopen_settings(tab=None):
+    """Re-run the whole app (so theme/effect changes apply) and open this window again, on the same tab."""
+    st.session_state["open_settings"] = True
+    if tab:
+        st.session_state["settings_tab"] = tab
+    st.rerun(scope="app")
+
+
+def _export_my_data(u):
+    scale_, rules_ = prefs_db.load(u)
+    gs_, lv_ = prefs_db.load_gpa(u)
+    return {
+        "username": u, "email": auth.get_email(u), "exported": datetime.now().isoformat(timespec="seconds"),
+        "classes": cdb.list_classes(u),
+        "class_grades": [{k: r[k] for k in ("name", "status", "entered_text", "percent", "gpa_letter", "credits", "level")}
+                         for r in overview.class_table(u)],
+        "recorded_scores": [{k: g[k] for k in ("class", "label", "marks", "max", "percent")} for g in cdb.list_grades(u)],
+        "grading_rules": {"scale": scale_, **rules_},
+        "gpa_scale": gs_, "course_levels": lv_,
+        "preferences": {"theme": prefs_db.load_theme(u), "grades_shown_as": prefs_db.load_display(u), "effects": prefs_db.load_ui(u)},
+        "files": [{"name": f["name"], "size_bytes": f["size"]} for f in files_db.list_files(u)],
+    }
+
+
+@st.dialog("⚙️ Settings", width="large")
+def settings_dialog():
+    u = st.session_state["user"]
+    email_now = auth.get_email(u) or "—"
+    flash = st.session_state.pop("settings_flash", None)
+    if flash:
+        st.success(flash)
+    t_look, t_prefs, t_acct, t_data = st.tabs(_ST_TABS, default=st.session_state.pop("settings_tab", None))
+
+    with t_look:
+        st.markdown("**🌓 Theme**")
+        cur_theme = st.session_state.get("theme_mode", "Light")
+        new_theme = st.radio("Theme", prefs_db.THEMES, index=prefs_db.THEMES.index(cur_theme), horizontal=True, key="s_theme",
+                             label_visibility="collapsed",
+                             help="Light or dark look. Auto follows your device's own light/dark setting. The 🌙 button at the top also switches it.")
+        if new_theme != cur_theme:
+            st.session_state["theme_mode"] = new_theme
+            prefs_db.save_theme(u, new_theme)
+            _reopen_settings(_ST_TABS[0])
+        st.divider()
+        st.markdown("**✨ Effects**")
+        st.caption("Turn animations on or off. Saved to your account.")
+        for k in UI_KEYS:
+            cur = st.session_state.get(f"ui_{k}", True)
+            v = st.toggle(prefs_db.UI_LABELS[k], value=cur, key=f"s_ui_{k}", help=UI_HELP[k])
+            if v != cur:
+                st.session_state[f"ui_{k}"] = v
+                prefs_db.save_ui(u, {kk: (v if kk == k else st.session_state.get(f"ui_{kk}", True)) for kk in UI_KEYS})
+                _reopen_settings(_ST_TABS[0])
+
+    with t_prefs:
+        st.markdown("**📊 How grades are shown**")
+        modes = prefs_db.DISPLAY_MODES
+        cur_mode = prefs_db.load_display(u)
+        new_mode = st.radio("Show grades as", modes, index=modes.index(cur_mode), horizontal=True, key="s_display",
+                            help="Report cards can show letter grades (A, B+), percentages (85%), or both.")
+        if new_mode != cur_mode:
+            prefs_db.save_display(u, new_mode)
+            st.session_state["_pending_state"] = {**st.session_state.get("_pending_state", {}), "display_mode": new_mode}
+            st.session_state["settings_flash"] = f"Grades now show as {new_mode.lower()}."
+            _reopen_settings(_ST_TABS[1])
+        st.divider()
+        st.markdown("**↩ Reset to defaults**")
+        st.caption("Go back to the standard grade letters, pass marks and GPA scale. Your grades and classes are not touched.")
+        sure_reset = st.checkbox("Yes, reset my grading rules and GPA scale", key="s_sure_reset")
+        r1, r2 = st.columns(2)
+        if r1.button("Reset grading rules", disabled=not sure_reset, width="stretch",
+                     help="Restores the default report-card grade letters and the 40% pass marks."):
+            prefs_db.reset(u)
+            st.session_state["settings_flash"] = "Grading rules reset to the defaults."
+            _reopen_settings(_ST_TABS[1])
+        if r2.button("Reset GPA scale", disabled=not sure_reset, width="stretch",
+                     help="Restores the standard 4.0 scale and the Honors / AP bonuses."):
+            prefs_db.reset_gpa(u)
+            st.session_state["settings_flash"] = "GPA scale reset to the defaults."
+            _reopen_settings(_ST_TABS[1])
+
+    with t_acct:
+        st.markdown("**Your account**")
+        a1, a2 = st.columns(2)
+        a1.caption("Username"); a1.write(f"**{u}**")
+        a2.caption("Email"); a2.write(f"**{email_now}**")
+        with st.expander("🔑 Change password"):
+            with st.form("chpw", clear_on_submit=True):
+                cur = st.text_input("Current password", type="password", help="Needed to confirm it is really you.")
+                new1 = st.text_input("New password", type="password", help="Any length, any characters.")
+                new2 = st.text_input("Confirm new password", type="password", help="Type the new password again.")
+                if st.form_submit_button("Change password", type="primary", width="stretch"):
+                    ok, msg = auth.change_password(u, cur, new1, new2)
+                    (st.success if ok else st.error)(msg)
+        with st.expander("✉️ Change email"):
+            with st.form("chem", clear_on_submit=True):
+                new_email = st.text_input("New email", help="Used for confirmation codes and password resets, so it must be an address you can open.")
+                pw_e = st.text_input("Your password", type="password", key="chem_pw", help="Needed to confirm it is really you.")
+                if st.form_submit_button("Update email", type="primary", width="stretch"):
+                    ok, msg = auth.change_email(u, pw_e, new_email)
+                    (st.success if ok else st.error)(msg)
+        with st.expander("📬 Check that emails reach you"):
+            st.caption("Password reset codes are sent by email. Send yourself a test to confirm it works.")
+            if st.button("Send a test email to my address", width="stretch"):
+                now = datetime.now().timestamp()
+                if now - st.session_state.get("last_test_email", 0) < 30:
+                    st.warning("Please wait a few seconds before sending another test.")
+                elif _dev_mode():
+                    st.info("Test mode is on (dev_show_code), so no real email is sent.")
+                else:
+                    st.session_state["last_test_email"] = now
+                    err = _deliver(auth.send_test_email, email_now)
+                    st.error(err) if err else st.success(f"Test email sent to {email_now}. Check your inbox (and spam folder).")
+        with st.expander("🗑 Delete my account"):
+            st.warning("This permanently deletes your account, classes, grades and files.")
+            pw_d = st.text_input("Your password", type="password", key="del_pw", help="Needed to confirm it is really you.")
+            sure = st.checkbox("I understand this cannot be undone", key="del_sure")
+            if st.button("Delete my account permanently", disabled=not (sure and pw_d)):
+                who, _ = auth.authenticate(u, pw_d)
+                if not who:
+                    st.error("Your password is incorrect.")
+                else:
+                    auth.delete_member(u)
+                    _clear_user_state()
+                    st.rerun(scope="app")
+        if st.button("Log out", width="stretch", key="s_logout"):
+            _clear_user_state()
+            st.rerun(scope="app")
+
+    with t_data:
+        st.markdown("**⬇ Download your data**")
+        st.caption("Your classes, grades, scores, grading rules and preferences as a JSON file (file names only, not file contents).")
+        st.download_button("⬇ Download my data (JSON)", json.dumps(_export_my_data(u), indent=2), file_name=f"{u}_grades_data.json",
+                           mime="application/json", type="primary", width="stretch")
+        st.divider()
+        st.markdown("**🧹 Clear grades**")
+        st.caption("Removes the grade you typed for every class and all recorded test scores. Your classes stay.")
+        sure_g = st.checkbox("Yes, clear all my grades", key="s_sure_grades")
+        if st.button("Clear all my grades", disabled=not sure_g, width="stretch"):
+            for r in overview.class_table(u):
+                cdb.delete_final(u, r["name"])
+            for g in cdb.list_grades(u):
+                cdb.delete_grade(u, g["id"])
+            st.session_state["settings_flash"] = "All grades cleared."
+            _reopen_settings(_ST_TABS[3])
+
+
 IS_ADMIN = auth.is_admin(user)
-TAB_NAMES = ["✏️ My grades", "📝 Report card", "🎯 GPA", "⚙️ Grading rules", "📚 My classes", "📁 Files", "🤖 Assistant", "👤 Account"]
+TAB_NAMES = ["✏️ My grades", "📝 Report card", "🎯 GPA", "⚙️ Grading rules", "📚 My classes", "📁 Files", "🤖 Assistant"]
 if IS_ADMIN:
     TAB_NAMES.append("🛠 Admin")
 _tabs = st.tabs(TAB_NAMES)
-tab_grades, tab_report, tab_gpa, tab_rules, tab_classes, tab_files, tab_ai, tab_account = _tabs[:8]
+tab_grades, tab_report, tab_gpa, tab_rules, tab_classes, tab_files, tab_ai = _tabs[:7]
 if IS_ADMIN:
-    tab_admin = _tabs[8]
+    tab_admin = _tabs[7]
 scale, rules = prefs_db.load(user)
 gpa_scale, gpa_levels = prefs_db.load_gpa(user)
 my = cdb.list_classes(user)
@@ -981,6 +1125,8 @@ with tab_ai:
                     st.session_state["_pending_state"] = {**st.session_state.get("_pending_state", {}), **res["set_state"]}
                 if res["nav"]:
                     st.session_state["goto"] = res["nav"]
+                if res.get("open_settings"):
+                    st.session_state["open_settings"] = True
                 st.rerun()
     if st.session_state["ai_log"]:
         n1, n2 = st.columns([3, 1], vertical_alignment="center")
@@ -1120,66 +1266,6 @@ with tab_rules:
         st.rerun()
 
 
-# ---- Account tab
-with tab_account:
-    email_now = auth.get_email(user) or "—"
-    st.markdown("#### Your account")
-    a1, a2 = st.columns(2)
-    a1.caption("Username"); a1.write(f"**{user}**")
-    a2.caption("Email"); a2.write(f"**{email_now}**")
-
-    with st.container(border=True, key="card_3"):
-        st.markdown("##### Change password")
-        with st.form("chpw", clear_on_submit=True):
-            cur = st.text_input("Current password", type="password", help="Needed to confirm it is really you.")
-            new1 = st.text_input("New password", type="password", help="Any length, any characters.")
-            new2 = st.text_input("Confirm new password", type="password", help="Type the new password again.")
-            if st.form_submit_button("Change password", type="primary", width="stretch"):
-                ok, msg = auth.change_password(user, cur, new1, new2)
-                (st.success if ok else st.error)(msg)
-
-    with st.container(border=True, key="card_4"):
-        st.markdown("##### Change email")
-        with st.form("chem", clear_on_submit=True):
-            new_email = st.text_input("New email", help="Used for confirmation codes and password resets, so it must be an address you can open.")
-            pw_e = st.text_input("Your password", type="password", key="chem_pw", help="Needed to confirm it is really you.")
-            if st.form_submit_button("Update email", type="primary", width="stretch"):
-                ok, msg = auth.change_email(user, pw_e, new_email)
-                (st.success if ok else st.error)(msg)
-                if ok:
-                    st.rerun()
-
-    with st.container(border=True, key="card_5"):
-        st.markdown("##### Check that emails reach you")
-        st.caption("Password reset codes are sent by email. Send yourself a test to confirm it works.")
-        if st.button("Send a test email to my address", width="stretch"):
-            now = datetime.now().timestamp()
-            if now - st.session_state.get("last_test_email", 0) < 30:
-                st.warning("Please wait a few seconds before sending another test.")
-            elif _dev_mode():
-                st.info("Test mode is on (dev_show_code), so no real email is sent.")
-            else:
-                st.session_state["last_test_email"] = now
-                err = _deliver(auth.send_test_email, email_now)
-                if err:
-                    st.error(err)
-                else:
-                    st.success(f"Test email sent to {email_now}. Check your inbox (and spam folder).")
-
-    with st.expander("Delete my account"):
-        st.warning("This permanently deletes your account, classes and grading rules.")
-        pw_d = st.text_input("Your password", type="password", key="del_pw", help="Needed to confirm it is really you.")
-        sure = st.checkbox("I understand this cannot be undone")
-        if st.button("Delete my account permanently", disabled=not (sure and pw_d)):
-            u, _ = auth.authenticate(user, pw_d)
-            if not u:
-                st.error("Your password is incorrect.")
-            else:
-                auth.delete_member(user)
-                _clear_user_state()
-                st.rerun()
-
-
 # ---- Admin tab (only on the admin's own device)
 if IS_ADMIN:
     with tab_admin:
@@ -1205,6 +1291,10 @@ if IS_ADMIN:
                 st.toast(f"Deleted {n} account(s).")
                 st.rerun()
 
+
+# ---- Settings window (opened from the profile menu or by the assistant)
+if st.session_state.pop("open_settings", False):
+    settings_dialog()
 
 # ---- Let the assistant switch tabs (best effort: clicks the tab in the page)
 _goto = st.session_state.pop("goto", None)
