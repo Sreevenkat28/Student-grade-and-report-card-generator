@@ -146,6 +146,20 @@ st.markdown(
 )
 
 UI_KEYS = prefs_db.UI_KEYS
+UI_HELP = {
+    "animations": "Master switch: turns every animation on or off at once.",
+    "transitions": "Tabs, menus and the page fade and slide in smoothly.",
+    "click_fx": "Buttons shrink and ripple when pressed, and boxes glow when you click into them.",
+    "hover_fx": "Cards and result boxes lift slightly when you point at them.",
+    "typing_fx": "The assistant's replies appear as if they were being typed.",
+    "cards_fx": "Forms, tables and results fade in when they appear.",
+}
+RESULT_HELP = {
+    "Total": "All the marks scored, out of all the marks possible.",
+    "Percentage": "Total marks as a percentage of the total possible.",
+    "Grade": "The letter for that percentage, from your grade scale in the Grading rules tab.",
+    "Result": "PASS needs the overall percentage (and, if switched on, every subject) to reach your pass marks.",
+}
 
 
 def _motion_css(ui):
@@ -348,7 +362,8 @@ def _reset_screen(pending):
         if st.session_state.get("dev_code"):
             st.warning(f"Test mode — your code is **{st.session_state['dev_code']}**")
         with st.form("verify"):
-            code = st.text_input("Confirmation code", max_chars=6, placeholder="123456")
+            code = st.text_input("Confirmation code", max_chars=6, placeholder="123456",
+                                 help="The 6-digit code we just emailed you. It expires in 10 minutes.")
             if st.form_submit_button("Verify code", type="primary", width="stretch"):
                 ok, msg = auth.verify_code(pending["email"], code)
                 if ok:
@@ -365,8 +380,8 @@ def _reset_screen(pending):
     else:
         st.success("Code confirmed. Choose a new password.")
         with st.form("newpw"):
-            pw = st.text_input("New password", type="password")
-            pw2 = st.text_input("Confirm new password", type="password")
+            pw = st.text_input("New password", type="password", help="Any length, any characters. Keep it private.")
+            pw2 = st.text_input("Confirm new password", type="password", help="Type the same new password again.")
             if st.form_submit_button("Save password & log in", type="primary", width="stretch"):
                 err = auth.check_password(pw) or ("Passwords do not match." if pw != pw2 else "")
                 if err:
@@ -385,7 +400,8 @@ def _signup_screen(pending):
     if st.session_state.get("dev_code"):
         st.warning(f"Test mode — your code is **{st.session_state['dev_code']}**")
     with st.form("verify_signup"):
-        code = st.text_input("Confirmation code", max_chars=6, placeholder="123456")
+        code = st.text_input("Confirmation code", max_chars=6, placeholder="123456",
+                                 help="The 6-digit code we just emailed you. It expires in 10 minutes.")
         if st.form_submit_button("Verify & create account", type="primary", width="stretch"):
             ok, msg = auth.verify_code(pending["email"], code)
             if not ok:
@@ -422,10 +438,10 @@ def login_screen():
     tab_signup, tab_login = st.tabs(["✨ Sign up", "🔑 Log in"])
     with tab_signup:
         with st.form("signup"):
-            email = st.text_input("Email")
-            uname = st.text_input("Username", help="Use this for quick log in later.")
-            pw = st.text_input("Password", type="password", key="su_pw")
-            pw2 = st.text_input("Confirm password", type="password", key="su_pw2")
+            email = st.text_input("Email", help="We send your confirmation code here, so use a real address you can open.")
+            uname = st.text_input("Username", help="A short nickname: 3-30 letters, numbers, _ . or -. You can log in with it instead of your email.")
+            pw = st.text_input("Password", type="password", key="su_pw", help="Any length, any characters. Keep it private.")
+            pw2 = st.text_input("Confirm password", type="password", key="su_pw2", help="Type the same password again to avoid typos.")
             if st.form_submit_button("Send me a confirmation code", type="primary", width="stretch"):
                 ok, msg, email_n, uname_n = auth.check_signup(email, uname)
                 err = msg if not ok else (auth.check_password(pw) or ("Passwords do not match." if pw != pw2 else ""))
@@ -436,7 +452,7 @@ def login_screen():
                                     "password": pw})
     with tab_login:
         with st.form("login"):
-            ident = st.text_input("Username or email")
+            ident = st.text_input("Username or email", help="Either one works.")
             pw = st.text_input("Password", type="password", key="li_pw")
             if st.form_submit_button("Log in", type="primary", width="stretch"):
                 u, err = auth.authenticate(ident, pw)
@@ -446,7 +462,7 @@ def login_screen():
                 else:
                     st.error(err)
         with st.expander("Forgot password?"):
-            fid = st.text_input("Username or email", key="fp_id")
+            fid = st.text_input("Username or email", key="fp_id", help="We email a code to the address on this account so you can set a new password.")
             if st.button("Email me a reset code", width="stretch"):
                 member = auth.find_member(fid) if fid.strip() else None
                 if not member:
@@ -475,8 +491,10 @@ if not cdb.is_onboarded(user):
                 unsafe_allow_html=True)
     with st.form("onboarding"):
         cur = st.text_area("📘 What classes are you taking right now?",
+                           help="Your current classes. They pre-fill the report card and GPA tables. You can change them later in My classes.",
                            placeholder="One per line or separated by commas", height=120)
         prev = st.text_area("📗 Any previous classes you've already completed? (optional)",
+                            help="Classes you finished in the past. Kept for your records and shown separately.",
                             placeholder="One per line or separated by commas", height=120)
         go = st.form_submit_button("Save & continue", type="primary", width="stretch")
     skip = st.button("Skip for now", width="stretch")
@@ -505,19 +523,20 @@ with head_l.popover(f"👤 {user}", width="stretch"):
     _badge = '<span class="badge">ADMIN</span>' if auth.is_admin(user) else ""
     st.markdown(f'<div class="prof"><div class="avatar">{html.escape(user[:1].upper())}</div>'
                 f'<div><b>{html.escape(user)}</b>{_badge}<br><span>{html.escape(_email)}</span></div></div>'
-                f'<div class="stats"><div><b>{len(_cls["current"])}</b>current classes</div>'
-                f'<div><b>{len(_grades)}</b>grades</div><div><b>{_nfiles}</b>files</div></div>',
+                f'<div class="stats"><div title="Classes you are taking now"><b>{len(_cls["current"])}</b>current classes</div>'
+                f'<div title="Test and assignment scores you have recorded"><b>{len(_grades)}</b>grades</div>'
+                f'<div title="Files stored in your Files tab"><b>{_nfiles}</b>files</div></div>',
                 unsafe_allow_html=True)
     if _cls["previous"]:
         st.caption(f"{len(_cls['previous'])} previous class(es)")
     st.divider()
     st.markdown("**🌓 Appearance**")
     st.radio("Theme", prefs_db.THEMES, horizontal=True, key="theme_mode", on_change=_save_theme,
-             label_visibility="collapsed", help="Auto follows your device's light/dark setting.")
+             label_visibility="collapsed", help="Light or dark look. Auto follows your device's own light/dark setting.")
     st.markdown("**✨ Effects**")
     st.caption("Turn animations on or off. Saved to your account.")
     for _k in UI_KEYS:
-        st.toggle(prefs_db.UI_LABELS[_k], key=f"ui_{_k}", on_change=_save_ui)
+        st.toggle(prefs_db.UI_LABELS[_k], key=f"ui_{_k}", on_change=_save_ui, help=UI_HELP[_k])
     st.divider()
     if st.button("⚙️ Account settings", width="stretch", key="prof_account"):
         st.session_state["goto"] = "👤 Account"
@@ -574,7 +593,7 @@ def _render_report(student, res, mode):
             metrics.append(("Grade", res["grade"]))
         metrics.append(("Result", "PASS" if res["passed"] else "FAIL"))
         for col, (label, value) in zip(st.columns(len(metrics)), metrics):
-            col.metric(label, value)
+            col.metric(label, value, help=RESULT_HELP.get(label))
 
         if res["passed"]:
             st.success(f"**Remarks:** {res['remark']}")
@@ -592,33 +611,36 @@ with tab_report:
     _saved_mode = prefs_db.load_display(user)
     if "display_mode" not in st.session_state:  # first visit this session: start from the saved choice
         st.session_state["display_mode"] = _saved_mode
-    mode = st.radio("Show grades as", prefs_db.DISPLAY_MODES, horizontal=True, key="display_mode")
+    mode = st.radio("Show grades as", prefs_db.DISPLAY_MODES, horizontal=True, key="display_mode",
+                    help="How results are shown: letter grades (A, B+), percentages (85%), or both. Saved to your account.")
     if mode != _saved_mode:
         prefs_db.save_display(user, mode)
     with st.form("student"):
         st.markdown("##### Student details")
         c1, c2 = st.columns(2)
-        name = c1.text_input("Student name")
-        roll = c2.text_input("Roll / ID number")
-        cls = c1.text_input("Class / Grade")
-        exam = c2.text_input("Exam")
+        name = c1.text_input("Student name", help="Whose report card this is. Printed at the top.")
+        roll = c2.text_input("Roll / ID number", help="Optional. The student's roll number or ID, shown on the report card.")
+        cls = c1.text_input("Class / Grade", help="Optional. The year or section, for example 10-B.")
+        exam = c2.text_input("Exam", help="Optional title shown under REPORT CARD, for example Final Term 2026.")
 
         st.markdown("##### Subject marks")
         subjects = my["current"] or DEFAULT_SUBJECTS
         if my["current"]:
-            st.caption("Pre-filled from your current classes. Add or delete rows as needed.")
+            st.caption("Pre-filled from your current classes. Add or delete rows as needed. Hover a column heading for help.")
         else:
-            st.caption("Add or delete rows as needed. Add your classes in the My classes tab to pre-fill these.")
+            st.caption("Add or delete rows as needed. Hover a column heading for help. Add your classes in the My classes tab to pre-fill these.")
         table = st.data_editor(
             pd.DataFrame({"Subject": subjects, "Marks": [None] * len(subjects),
                           "Max": [100.0] * len(subjects)}),
             num_rows="dynamic", width="stretch", hide_index=True,
             column_config={
-                "Marks": st.column_config.NumberColumn(min_value=0.0),
-                "Max": st.column_config.NumberColumn(min_value=1.0),
+                "Subject": st.column_config.TextColumn(help="Name of the subject."),
+                "Marks": st.column_config.NumberColumn(min_value=0.0, help="Marks the student scored in this subject."),
+                "Max": st.column_config.NumberColumn(min_value=1.0, help="Total marks possible in this subject, for example 100."),
             },
         )
-        submitted = st.form_submit_button("Generate report card", type="primary", width="stretch")
+        submitted = st.form_submit_button("Generate report card", type="primary", width="stretch",
+                                          help="Works out each subject's percentage and grade, the total, and PASS or FAIL using your Grading rules.")
 
     if submitted:
         if not name.strip():
@@ -671,8 +693,10 @@ with tab_classes:
     _class_list("📗 Previous classes", "previous", "No previous classes yet.")
     with st.form("add_class", clear_on_submit=True):
         st.markdown("##### Add classes")
-        names = st.text_input("Class name(s)", placeholder="Separate several with commas")
-        where = st.radio("Add to", ["Current", "Previous"], horizontal=True)
+        names = st.text_input("Class name(s)", placeholder="Separate several with commas",
+                              help="One class, or several separated by commas, for example Math, Physics.")
+        where = st.radio("Add to", ["Current", "Previous"], horizontal=True,
+                         help="Current = classes you are taking now. Previous = classes you have finished.")
         if st.form_submit_button("➕ Add", type="primary", width="stretch"):
             parsed = cdb.parse_names(names)
             if not parsed:
@@ -697,10 +721,10 @@ with tab_classes:
     else:
         with st.form("add_grade", clear_on_submit=True):
             g1, g2, g3, g4 = st.columns([3, 2, 2, 3])
-            g_class = g1.selectbox("Class", all_classes)
-            g_marks = g2.number_input("Marks", min_value=0.0, value=None, step=0.5, placeholder="e.g. 45")
-            g_max = g3.number_input("Out of", min_value=1.0, value=100.0, step=1.0)
-            g_label = g4.text_input("Label (optional)", placeholder="Unit 3 test")
+            g_class = g1.selectbox("Class", all_classes, help="Which class this score belongs to.")
+            g_marks = g2.number_input("Marks", min_value=0.0, value=None, step=0.5, placeholder="e.g. 45", help="The marks you got.")
+            g_max = g3.number_input("Out of", min_value=1.0, value=100.0, step=1.0, help="The most you could have got, for example 50 for a quiz marked out of 50.")
+            g_label = g4.text_input("Label (optional)", placeholder="Unit 3 test", help="A note to remember which test or assignment this was.")
             if st.form_submit_button("➕ Record grade", type="primary", width="stretch"):
                 if g_marks is None:
                     st.error("Enter the marks you got.")
@@ -734,7 +758,8 @@ with tab_files:
     st.caption(f"{n_files}/{files_db.MAX_FILES} files · {_fmt_size(used)} of {_fmt_size(files_db.MAX_TOTAL_BYTES)} used · "
                f"up to {_fmt_size(files_db.MAX_FILE_BYTES)} per file. Store PDFs, notes, syllabi, report cards - any file type.")
     with st.form("upload_files", clear_on_submit=True):
-        uploads = st.file_uploader("Add files", accept_multiple_files=True)
+        uploads = st.file_uploader("Add files", accept_multiple_files=True,
+                                    help="Any file type (PDF, Word, images, notes). Up to 10 MB each. Only you can see your files.")
         if st.form_submit_button("Save files", type="primary", width="stretch"):
             if not uploads:
                 st.warning("Choose at least one file first.")
@@ -792,7 +817,8 @@ with tab_ai:
     use_claude = False
     if api_key:  # an API key is only ever configured on purpose
         use_claude = st.radio("Assistant", ["Built-in assistant", "Claude AI (uses your API credits)"],
-                              horizontal=True, key="ai_mode").startswith("Claude")
+                              horizontal=True, key="ai_mode",
+                              help="Built-in: works with short commands and costs nothing. Claude AI: understands free-form questions but uses the app owner's API credits.").startswith("Claude")
     if use_claude:
         st.caption("Your messages, grades and any file I read are sent to Anthropic's Claude. "
                    "I can't change passwords or delete accounts or files.")
@@ -878,9 +904,10 @@ with tab_ai:
 # ---- GPA tab
 with tab_gpa:
     st.markdown("#### GPA calculator")
-    gmode = st.radio("Enter grades as", ["Letter grades", "Percentages"], horizontal=True, key="gpa_mode")
+    gmode = st.radio("Enter grades as", ["Letter grades", "Percentages"], horizontal=True, key="gpa_mode",
+                     help="Letter grades: pick A, B+, etc. Percentages: type 0-100 and it is converted to a letter with the cut-offs in your GPA scale.")
     st.caption("Uses your GPA scale. Weighted GPA adds each course level's bonus (no bonus for a 0-point grade). "
-               "Leave a grade empty for courses still in progress. Change the scale, bonuses and "
+               "Leave a grade empty for courses still in progress. Hover a column heading for help. Change the scale, bonuses and "
                "percentage cut-offs in the Grading rules tab."
                + (" Percentages are converted to letters using your cut-offs." if gmode == "Percentages" else ""))
     n = max(len(my["current"]), 4)
@@ -889,28 +916,30 @@ with tab_gpa:
     if gmode == "Letter grades":
         gdf = pd.DataFrame({"Course": names, "Grade": [None] * n, "Credits": [1.0] * n,
                             "Level": [level_names[0]] * n})
-        gcfg = {"Grade": st.column_config.SelectboxColumn(options=[g["grade"] for g in gpa_scale])}
+        gcfg = {"Grade": st.column_config.SelectboxColumn(options=[g["grade"] for g in gpa_scale], help="The final letter grade. Leave empty if the course is not finished yet.")}
     else:
         gdf = pd.DataFrame({"Course": names, "Percent": [None] * n, "Credits": [1.0] * n,
                             "Level": [level_names[0]] * n})
-        gcfg = {"Percent": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)}
+        gcfg = {"Percent": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5, help="Final percentage (0-100). Converted to a letter using your GPA scale. Leave empty if not finished.")}
     with st.form("gpa"):
         gtable = st.data_editor(
             gdf, num_rows="dynamic", width="stretch", hide_index=True,
             column_config={**gcfg,
-                           "Credits": st.column_config.NumberColumn(min_value=0.0, step=0.5),
-                           "Level": st.column_config.SelectboxColumn(options=level_names, required=True)},
+                           "Course": st.column_config.TextColumn(help="Name of the course."),
+                           "Credits": st.column_config.NumberColumn(min_value=0.0, step=0.5, help="How much the course counts. A full-year course is usually 1, a semester 0.5."),
+                           "Level": st.column_config.SelectboxColumn(options=level_names, required=True, help="Regular, Honors, AP / IB... Harder levels add bonus points to the weighted GPA.")},
         )
-        calc = st.form_submit_button("Calculate GPA", type="primary", width="stretch")
+        calc = st.form_submit_button("Calculate GPA", type="primary", width="stretch",
+                                    help="Averages the grade points of your graded courses, weighted by credits.")
     if calc:
         g, gerr = gpa_lib.compute_gpa(gtable.to_dict("records"), gpa_scale, gpa_levels)
         if gerr:
             st.error(gerr)
         else:
             m1, m2, m3 = st.columns(3)
-            m1.metric("Unweighted GPA", f"{g['unweighted']:.2f}")
-            m2.metric("Weighted GPA", f"{g['weighted']:.2f}")
-            m3.metric("Credits counted", f"{g['credits']:g}")
+            m1.metric("Unweighted GPA", f"{g['unweighted']:.2f}", help="GPA on the standard scale where every course counts the same, whatever its difficulty.")
+            m2.metric("Weighted GPA", f"{g['weighted']:.2f}", help="Like unweighted, but Honors / AP courses add bonus points (set in the Grading rules tab). Can go above 4.0.")
+            m3.metric("Credits counted", f"{g['credits']:g}", help="Total credits of the courses that have a grade. Courses left empty are skipped.")
             st.dataframe(pd.DataFrame(g["rows"]), width="stretch", hide_index=True)
 
 
@@ -918,20 +947,26 @@ with tab_gpa:
 with tab_rules:
     st.markdown("#### Your grading rules")
     st.caption("These decide the grade letters and the pass/fail result on your report cards. "
-               "Edit the table, add or delete rows, then save.")
+               "Edit the table, add or delete rows, then save. Hover a column heading or a ? for help.")
     with st.form("rules"):
         edited = st.data_editor(
             pd.DataFrame({"Grade": [g["grade"] for g in scale],
                           "Minimum %": [g["min"] for g in scale],
                           "Remark": [g["remark"] for g in scale]}),
             num_rows="dynamic", width="stretch", hide_index=True,
-            column_config={"Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)},
+            column_config={"Grade": st.column_config.TextColumn(help="The letter or label, for example A+ or Distinction."),
+                           "Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5, help="The lowest percentage that earns this grade. 90 means 90% and above. One grade must start at 0."),
+                           "Remark": st.column_config.TextColumn(help="Optional short comment shown with the result, for example Excellent.")},
         )
         c1, c2 = st.columns(2)
-        ps = c1.number_input("Pass mark per subject (%)", 0.0, 100.0, float(rules["pass_subject"]), 0.5)
-        po = c2.number_input("Pass mark overall (%)", 0.0, 100.0, float(rules["pass_overall"]), 0.5)
-        req = st.checkbox("Must pass every subject to pass overall", value=rules["require_all"])
-        save_rules = st.form_submit_button("Save grading rules", type="primary", width="stretch")
+        ps = c1.number_input("Pass mark per subject (%)", 0.0, 100.0, float(rules["pass_subject"]), 0.5,
+                             help="A subject counts as passed when the student scores at least this percentage in it.")
+        po = c2.number_input("Pass mark overall (%)", 0.0, 100.0, float(rules["pass_overall"]), 0.5,
+                             help="The whole report card passes only when the overall percentage reaches this.")
+        req = st.checkbox("Must pass every subject to pass overall", value=rules["require_all"],
+                          help="When on, failing even one subject fails the whole report card, even if the overall percentage is high.")
+        save_rules = st.form_submit_button("Save grading rules", type="primary", width="stretch",
+                                           help="Applies to every report card you make from now on.")
     if save_rules:
         new_scale, serr = grading.clean_scale(
             [{"grade": r["Grade"], "min": r["Minimum %"], "remark": r["Remark"]}
@@ -958,16 +993,19 @@ with tab_rules:
             pd.DataFrame({"Grade": [g["grade"] for g in gpa_scale], "Points": [g["points"] for g in gpa_scale],
                           "Minimum %": [g["min"] for g in gpa_scale]}),
             num_rows="dynamic", width="stretch", hide_index=True, key="gs_editor",
-            column_config={"Points": st.column_config.NumberColumn(min_value=0.0, max_value=10.0, step=0.1),
-                           "Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)},
+            column_config={"Grade": st.column_config.TextColumn(help="A letter in the GPA scale, for example A- or B+."),
+                           "Points": st.column_config.NumberColumn(min_value=0.0, max_value=10.0, step=0.1, help="GPA points this grade is worth. On the standard scale, A = 4.0."),
+                           "Minimum %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5, help="Lowest percentage that earns this grade when you enter percentages in the GPA tab. Leave empty if it should never come from a percentage. One grade must be 0.")},
         )
         st.markdown("**Course levels (weighted bonus)**")
         lv = st.data_editor(
             pd.DataFrame({"Level": [l["level"] for l in gpa_levels], "Bonus": [l["bonus"] for l in gpa_levels]}),
             num_rows="dynamic", width="stretch", hide_index=True, key="lv_editor",
-            column_config={"Bonus": st.column_config.NumberColumn(min_value=0.0, max_value=5.0, step=0.1)},
+            column_config={"Level": st.column_config.TextColumn(help="A course type, for example Honors or AP / IB."),
+                           "Bonus": st.column_config.NumberColumn(min_value=0.0, max_value=5.0, step=0.1, help="Extra points added to the weighted GPA for courses of this level. No bonus is added to a 0-point grade.")},
         )
-        save_gpa_rules = st.form_submit_button("Save GPA scale", type="primary", width="stretch")
+        save_gpa_rules = st.form_submit_button("Save GPA scale", type="primary", width="stretch",
+                                               help="Changes how the GPA tab and the assistant calculate GPA.")
     if save_gpa_rules:
         new_gs, gerr1 = gpa_lib.clean_scale(
             [{"grade": r["Grade"], "points": r["Points"], "min": r["Minimum %"]} for r in gs.to_dict("records")])
@@ -995,9 +1033,9 @@ with tab_account:
     with st.container(border=True, key="card_3"):
         st.markdown("##### Change password")
         with st.form("chpw", clear_on_submit=True):
-            cur = st.text_input("Current password", type="password")
-            new1 = st.text_input("New password", type="password")
-            new2 = st.text_input("Confirm new password", type="password")
+            cur = st.text_input("Current password", type="password", help="Needed to confirm it is really you.")
+            new1 = st.text_input("New password", type="password", help="Any length, any characters.")
+            new2 = st.text_input("Confirm new password", type="password", help="Type the new password again.")
             if st.form_submit_button("Change password", type="primary", width="stretch"):
                 ok, msg = auth.change_password(user, cur, new1, new2)
                 (st.success if ok else st.error)(msg)
@@ -1005,8 +1043,8 @@ with tab_account:
     with st.container(border=True, key="card_4"):
         st.markdown("##### Change email")
         with st.form("chem", clear_on_submit=True):
-            new_email = st.text_input("New email")
-            pw_e = st.text_input("Your password", type="password", key="chem_pw")
+            new_email = st.text_input("New email", help="Used for confirmation codes and password resets, so it must be an address you can open.")
+            pw_e = st.text_input("Your password", type="password", key="chem_pw", help="Needed to confirm it is really you.")
             if st.form_submit_button("Update email", type="primary", width="stretch"):
                 ok, msg = auth.change_email(user, pw_e, new_email)
                 (st.success if ok else st.error)(msg)
@@ -1032,7 +1070,7 @@ with tab_account:
 
     with st.expander("Delete my account"):
         st.warning("This permanently deletes your account, classes and grading rules.")
-        pw_d = st.text_input("Your password", type="password", key="del_pw")
+        pw_d = st.text_input("Your password", type="password", key="del_pw", help="Needed to confirm it is really you.")
         sure = st.checkbox("I understand this cannot be undone")
         if st.button("Delete my account permanently", disabled=not (sure and pw_d)):
             u, _ = auth.authenticate(user, pw_d)

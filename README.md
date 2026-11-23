@@ -20,6 +20,9 @@ The Assistant tab is a chat-style command assistant that works for everyone with
 
 It uses pattern matching, not a language model, so it works best with short commands. Optional: if the app owner adds `ANTHROPIC_API_KEY` to Secrets (see `.streamlit/secrets.toml.example`), a switch appears to use Claude instead. That mode is billed to the key's owner, sends messages and grades to Anthropic, and is limited to 30 messages per hour per user.
 
+## Built-in help
+Most labels have a small **?** icon, and the table column headings explain themselves when you hover them, so every setting and number is described where you use it.
+
 ## Dark mode
 Switch with the 🌙 / ☀️ button next to your name, or choose Light / Dark / Auto (follows your device) in the profile menu, or tell the assistant `dark mode`. The choice is saved to your account.
 
