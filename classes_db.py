@@ -185,3 +185,74 @@ def get_finals(username: str):
 def delete_final(username: str, class_name: str):
     with _final_conn() as c:
         c.execute("DELETE FROM final_grades WHERE username = ? AND class = ? COLLATE NOCASE", (username, class_name))
+
+
+# ---------------------------------------------------------------- undo support, renaming, per-class credits/level
+def snapshot(username: str):
+    """Everything about this user's classes and grades, as plain data (for undo)."""
+    _grades_conn().close()
+    with _final_conn() as c:
+        classes = c.execute("SELECT name, status FROM classes WHERE username = ? ORDER BY name", (username,)).fetchall()
+        finals = c.execute("SELECT class, percent, letter, credits, level FROM final_grades WHERE username = ? ORDER BY class",
+                           (username,)).fetchall()
+        scores = c.execute("SELECT class, marks, max, label, created FROM grades WHERE username = ? ORDER BY id",
+                           (username,)).fetchall()
+    return {"classes": [list(r) for r in classes], "finals": [list(r) for r in finals], "scores": [list(r) for r in scores]}
+
+
+def restore(username: str, snap: dict):
+    """Put this user's classes and grades back exactly as in `snap`."""
+    _grades_conn().close()
+    with _final_conn() as c:
+        for table in ("classes", "final_grades", "grades"):
+            c.execute(f"DELETE FROM {table} WHERE username = ?", (username,))
+        for name, status in snap["classes"]:
+            c.execute("INSERT OR IGNORE INTO classes VALUES (?, ?, ?)", (username, name, status))
+        for cls, pct, letter, credits, level in snap["finals"]:
+            c.execute("INSERT OR REPLACE INTO final_grades VALUES (?, ?, ?, ?, ?, ?)", (username, cls, pct, letter, credits, level))
+        for cls, marks, mx, label, created in snap["scores"]:
+            c.execute("INSERT INTO grades (username, class, marks, max, label, created) VALUES (?, ?, ?, ?, ?, ?)",
+                      (username, cls, marks, mx, label, created))
+
+
+def rename_class(username: str, old: str, new: str):
+    """Rename a class everywhere (list, test scores, grade). Returns (ok, message)."""
+    new = " ".join(str(new or "").split())[:MAX_NAME]
+    if not new:
+        return False, "Give the new name."
+    _grades_conn().close()
+    with _final_conn() as c:
+        if old.lower() != new.lower() and c.execute(
+                "SELECT 1 FROM classes WHERE username = ? AND name = ? COLLATE NOCASE", (username, new)).fetchone():
+            return False, f'You already have a class called "{new}".'
+        c.execute("UPDATE classes SET name = ? WHERE username = ? AND name = ? COLLATE NOCASE", (new, username, old))
+        c.execute("UPDATE grades SET class = ? WHERE username = ? AND class = ? COLLATE NOCASE", (new, username, old))
+        c.execute("UPDATE final_grades SET class = ? WHERE username = ? AND class = ? COLLATE NOCASE", (new, username, old))
+    return True, "Renamed."
+
+
+def set_final_attrs(username: str, class_name: str, credits=None, level=None):
+    """Change a class's credits and/or course level without touching its grade."""
+    cur = get_finals(username).get(class_name.lower())
+    cr = float(credits) if credits is not None else (cur["credits"] if cur else 1.0)
+    if not 0 < cr <= 20:
+        return False, "Credits must be greater than 0 and at most 20."
+    lv = level if level is not None else (cur["level"] if cur else None)
+    with _final_conn() as c:
+        c.execute("INSERT OR REPLACE INTO final_grades VALUES (?, ?, ?, ?, ?, ?)",
+                  (username, cur["class"] if cur else class_name, cur["percent"] if cur else None,
+                   cur["letter"] if cur else None, cr, lv))
+    return True, "Saved."
+
+
+def clear_final_grade(username: str, class_name: str):
+    """Remove the typed grade for a class but keep its credits and level."""
+    cur = get_finals(username).get(class_name.lower())
+    if not cur:
+        return
+    if cur["credits"] == 1.0 and not cur["level"]:
+        delete_final(username, class_name)
+    else:
+        with _final_conn() as c:
+            c.execute("UPDATE final_grades SET percent = NULL, letter = NULL WHERE username = ? AND class = ? COLLATE NOCASE",
+                      (username, class_name))

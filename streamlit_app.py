@@ -1127,12 +1127,20 @@ with tab_ai:
                     st.session_state["goto"] = res["nav"]
                 if res.get("open_settings"):
                     st.session_state["open_settings"] = True
+                    if res.get("settings_tab"):
+                        st.session_state["settings_tab"] = res["settings_tab"]
                 st.rerun()
     if st.session_state["ai_log"]:
-        n1, n2 = st.columns([3, 1], vertical_alignment="center")
+        n1, n_undo, n2 = st.columns([2, 1.2, 1], vertical_alignment="center")
         if use_claude:
             u_in, u_out = st.session_state["ai_usage"]
             n1.caption(f"Model: {ai_model} · tokens used this chat: {u_in:,} in / {u_out:,} out")
+        else:
+            n1.caption("Tip: say `undo` (or press the button) to reverse my last change. Type `help` to see what I can do.")
+        if st.session_state.get("ai_state", {}).get("undo") and n_undo.button(
+                "↩ Undo last change", width="stretch", key="ai_undo_btn", help="Reverses the last change I made for you."):
+            st.session_state["ai_pending"] = "undo"
+            st.rerun()
         if n2.button("New chat", width="stretch"):
             for k in ("ai_msgs", "ai_log", "ai_usage", "ai_state"):
                 st.session_state.pop(k, None)

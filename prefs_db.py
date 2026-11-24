@@ -129,3 +129,16 @@ def save_theme(username: str, theme: str):
         data = _read(username)
         data["theme"] = theme
         _write(username, data)
+
+
+# ---------------------------------------------------------------- whole-settings export/import (used by undo)
+def export_all(username: str) -> dict:
+    return json.loads(json.dumps(_read(username)))
+
+
+def import_all(username: str, data: dict):
+    if data:
+        _write(username, data)
+    else:
+        with _conn() as c:
+            c.execute("DELETE FROM prefs WHERE username = ?", (username,))

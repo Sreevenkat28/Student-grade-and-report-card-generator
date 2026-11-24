@@ -180,7 +180,7 @@ def _set_class_grade(user, a, _ctx):
     if not name:
         raise ValueError("Which class?")
     if percent is None and not letter:  # empty grade clears it
-        cdb.delete_final(user, name)
+        cdb.clear_final_grade(user, name)
         return {"cleared": name}, f"Cleared the grade for {name}"
     created = False
     if not found:

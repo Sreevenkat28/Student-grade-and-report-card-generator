@@ -16,31 +16,34 @@ import grading
 import overview
 import prefs_db
 
-HELP = """Here's what I can do. Just tell me in plain words:
+HELP = """Tell me what to change in plain words. I can do several things in one message, and `undo` reverses the last change.
 
-**Your grades (feed every tab)**
+**Your grades**
 - `my math grade is B+` · `set physics grade to 87%` · `I have an A in art` · `clear my art grade`
+- `set math credits to 0.5` · `make physics honors` · `make all classes regular` · `list my grades`
+- `I got 45/50 in math` (a test score) · `undo my last grade` · `delete all my test scores`
 
-**Test scores & classes**
-- `I got 45/50 in math` · `record 85% in english` · `undo my last grade` · `list my grades`
+**Classes**
 - `add classes physics, art` · `add class history to previous` · `move art to previous` · `finished math`
-- `remove class art` · `delete all my grades` *(I'll ask you to confirm)*
+- `rename math to maths` · `remove class art` · `delete all my grades` *(I'll ask you to confirm)*
 
-**Reports & GPA**
+**Reports, GPA and advice**
 - `how am I doing?` · `weakest class` · `what's my GPA?` · `gpa A, B+, 92%`
-- `make a report card for Sam: math 80/100, science 45/50` (or just `make a report card` to use your recorded grades)
-- `study plan 12 hours and save it` · `how can I improve?`
+- `make a report card` · `make a report card for Sam, roll 12, exam Finals: math 80/100, science 45/50`
+- `study plan 12 hours and save it` · `how can I improve?` · `save a note called ideas: more practice tests`
 
-**Settings**
-- `set pass mark to 50` · `overall pass mark 45` · `must pass every subject off`
-- `set A to 85` · `set honors bonus to 0.5` · `set B+ points to 3.4` · `reset grading rules`
-- `show grades as percentages` (or letters / both)
-- `dark mode` · `light mode` · `auto theme` (match your device)
-- `turn animations off` · `turn on click effects` · `typing effect off`
+**Grading rules**
+- `set pass mark to 50` · `overall pass mark 45` · `must pass every subject off` · `show my pass marks`
+- `set A to 85` · `add grade A++ at 95` · `remove grade E` · `set the remark for B to Good` · `show my grading scale`
+- `set honors bonus to 0.5` · `set B+ points to 3.4` · `set gpa cutoff for A- to 91` · `add level IB bonus 1` · `remove level Honors`
+- `reset grading rules` · `reset gpa scale`
 
-**Files & navigation**
-- `list my files` · `show file notes.txt` · `delete file notes.txt`
-- `go to GPA` · `open files` · `take me to the report card` · `open settings` · `log out` · `new chat`"""
+**Look and settings**
+- `dark mode` · `light mode` · `auto theme` · `show grades as percentages` · `turn animations off` · `typing effect on`
+- `show my settings` · `show my profile` · `open settings` · `download my data` · `change my password`
+
+**Files and moving around**
+- `list my files` · `show file notes.txt` · `delete file notes.txt` · `go to GPA` · `open files` · `log out` · `new chat`"""
 
 TIPS = {
     "low": ["Re-learn the basics: go back to the first topics you lost track of and redo easy questions until they feel automatic.",
@@ -169,7 +172,7 @@ def _clear_class_grade(user, cls_raw, tabs, actions):
     cls = _match_class(user, cls_raw.strip(" .,!?"))
     if not cls:
         return f'I couldn\'t find a class called "{cls_raw.strip()}".'
-    cdb.delete_final(user, cls)
+    cdb.clear_final_grade(user, cls)
     actions.append(f"✅ Cleared the grade for {cls}")
     return f"Cleared the grade for **{cls}**."
 
@@ -312,7 +315,15 @@ def _gpa(user):
 def _report(user, m, raw, out):
     """Build a report card from the typed subjects (or recorded averages) and show it in the Report card tab."""
     body = (m.group("b") or "").strip()
-    name = _cap(m.group("name") or "") or user.title()
+    details = {"roll": "", "cls": "", "exam": ""}
+    parts = [x.strip() for x in re.split(r",|;", m.group("name") or "") if x.strip()]
+    name = _cap(parts[0]) if parts else ""
+    for extra in parts[1:]:
+        dm = re.match(r"^(roll|id|class|grade|exam|test)\s*(?:no\.?|number|#)?\s*[:=]?\s*(?P<v>.+)$", extra, re.I)
+        if dm:
+            k = dm.group(1).lower()
+            details["roll" if k in ("roll", "id") else "exam" if k in ("exam", "test") else "cls"] = dm.group("v").strip()
+    name = name or user.title()
     items = []
     for chunk in [c for c in re.split(r"[,;]|\band\b", body) if c.strip()]:
         im = re.fullmatch(rf"\s*(?P<s>[a-z][a-z &.'-]*?)\s*[:=-]?\s*(?P<m>{NUM})\s*(?:(?:/|out of)\s*(?P<x>{NUM}))?\s*%?\s*", chunk)
@@ -332,7 +343,8 @@ def _report(user, m, raw, out):
         return f"I couldn't make the report card: {err}"
     if from_saved:
         res = overview.apply_entered_letters(user, res)
-    out["report"] = ({"name": name, "roll": "", "cls": "", "exam": "Report card", "date": f"{date.today():%d %b %Y}"}, res)
+    out["report"] = ({"name": name, "roll": details["roll"], "cls": details["cls"], "exam": details["exam"] or "Report card",
+                      "date": f"{date.today():%d %b %Y}"}, res)
     out["nav"] = out["tabs"]["Report card"]
     out["actions"].append("✅ Built a report card and opened it")
     verdict = "**PASS**" if res["passed"] else "**FAIL**"
@@ -521,6 +533,7 @@ def _tab_for(text, tabs):
 
 
 LETTER = r"[a-f][+-]?"
+SET_GRADE_E = re.compile(rf"^(?:please\s+)?(?:set|change|make|update)\s+(?:my\s+)?(?P<c>.+?)\s+(?:to|as|=)\s+(?P<g>{LETTER}|{NUM}\s*%?)$")
 SET_GRADE_A = re.compile(r"^(?:please\s+)?(?:set|change|update|make)\s+(?:my\s+)?(?P<c>.+?)\s+grade\s+(?:to|as|=)\s+(?P<g>.+)$")
 SET_GRADE_B = re.compile(r"^(?:my\s+)?(?P<c>.+?)\s+grade\s+(?:is|=|now)\s+(?:an?\s+)?(?P<g>.+)$")
 SET_GRADE_C = re.compile(rf"^i\s+(?:have|got|get|am getting|'m getting)\s+(?:an?\s+)?(?P<g>{LETTER})\s+(?:in|for|on)\s+(?:my\s+)?(?P<c>.+)$")
@@ -529,7 +542,243 @@ CLEAR_GRADE = re.compile(r"^(?:please\s+)?(?:clear|remove|reset)\s+(?:my\s+)?(?P
 
 GOTO = re.compile(r"^(?:please\s+)?(?:go to|open|show|take me to|switch to|navigate to|view)\s+(?P<t>.+)$")
 REPORT = re.compile(r"^(?:please\s+)?(?:make|create|generate|build|calculate|do)\s+(?:me\s+)?(?:a\s+|my\s+)?report\s*card"
-                    r"(?:\s+for\s+(?P<name>[^:]{1,40}?)\s*:)?\s*[:\-]?\s*(?P<b>.*)$", re.I)
+                    r"(?:\s+for\s+(?P<name>[^:]{1,90}?)\s*:)?\s*[:\-]?\s*(?P<b>.*)$", re.I)
+
+
+
+# ----------------------------------------------------------------- more things the assistant can change or show
+ST_APPEARANCE, ST_PREFS, ST_ACCOUNT, ST_DATA = "🎨 Appearance", "🎛 Preferences", "👤 Account", "🗂 Your data"
+
+RENAME = re.compile(r"^(?:please\s+)?(?:rename|change the name of)\s+(?:my\s+)?(?:class\s+)?(?P<a>.+?)\s+(?:to|as|into)\s+(?P<b>.+)$", re.I)
+CREDITS = re.compile(rf"^(?:please\s+)?(?:set|change|make|update)\s+(?:my\s+)?(?P<c>.+?)\s+credits?\s*(?:to|=|at)\s*(?P<n>{NUM})(?:\s+credits?)?$")
+LEVEL = re.compile(r"^(?:please\s+)?(?:set|make|change|mark|put)\s+(?:my\s+)?(?P<c>.+?)\s+(?:level\s+)?(?:to|as|=)?\s*(?:an?\s+)?"
+                   r"(?P<l>honou?rs?|ap(?:\s*/\s*ib)?|ib|dual(?:\s+enrollment)?|regular|normal)(?:\s+(?:class|course|level))?$")
+ADD_GRADE = re.compile(rf"^(?:please\s+)?(?:add|create|new)\s+(?:a\s+)?grade\s+(?P<g>\S+)\s+(?:at|from|starting at|minimum|min|of|=|for)\s*(?P<n>{NUM})\s*%?"
+                       r"(?:\s+(?:remark|called|labeled|labelled|as)\s+(?P<r>.+))?$", re.I)
+REMOVE_GRADE = re.compile(r"^(?:please\s+)?(?:remove|delete|drop)\s+(?:the\s+)?grade\s+(?P<g>\S+)$", re.I)
+REMARK = re.compile(r"^(?:please\s+)?(?:set|change)\s+(?:the\s+)?remark\s+(?:for|of|on)\s+(?:grade\s+)?(?P<g>\S+)\s+(?:to|as|=)\s+(?P<r>.+)$", re.I)
+GPA_CUT = re.compile(rf"^(?:please\s+)?(?:set|change|make|update)\s+gpa\s+(?:cut-?off|minimum|min|threshold)\s+(?:for\s+)?(?P<g>[a-f][+-]?)\s+(?:to|at|=)\s*(?P<n>{NUM})\s*%?$")
+ADD_LEVEL = re.compile(rf"^(?:please\s+)?(?:add|create|new)\s+(?:a\s+)?(?:course\s+)?level\s+(?P<l>.+?)\s+(?:with\s+)?(?:bonus|weight|boost)\s*(?:of|=|to)?\s*(?P<n>{NUM})$", re.I)
+REMOVE_LEVEL = re.compile(r"^(?:please\s+)?(?:remove|delete|drop)\s+(?:the\s+)?(?:course\s+)?level\s+(?P<l>.+)$", re.I)
+NOTE = re.compile(r"^(?:please\s+)?(?:(?:save|write|create|add|make)\s+(?:me\s+)?(?:a\s+)?)?note(?:\s+(?:called|named|titled)\s+(?P<t>[^:]+?))?\s*:\s*(?P<b>.+)$", re.I | re.S)
+ALL_WORDS = {"all", "all classes", "all my classes", "every class", "every one", "everything", "all of them", "all of my classes"}
+
+
+def _grade_like(user, g, explicit):
+    """Is `g` a grade name we should treat as a cut-off target? (an existing grade, a letter grade, or said with 'grade')"""
+    if any(r["grade"].lower() == g.lower() for r in prefs_db.load(user)[0]):
+        return True
+    return bool(explicit or re.fullmatch(r"[a-f][+-]{0,2}", g.lower()))
+
+
+def _all_class_names(user):
+    my = cdb.list_classes(user)
+    return my["current"] + my["previous"]
+
+
+def _targets(user, c):
+    """One class, or every class for 'all'. Returns (names, error)."""
+    c = c.strip(" .,!?")
+    if c.lower() in ALL_WORDS:
+        names = _all_class_names(user)
+        return (names, None) if names else ([], "You have no classes yet.")
+    found = _match_class(user, c)
+    return ([found], None) if found else ([], f'I couldn\'t find a class called "{c}".')
+
+
+def _rename_class(user, a, b, actions):
+    old = _match_class(user, a.strip(" .,!?"))
+    if not old:
+        return f'I couldn\'t find a class called "{a.strip()}".'
+    new = _cap(b)
+    ok, msg = cdb.rename_class(user, old, new)
+    if not ok:
+        return msg
+    actions.append(f"✅ Renamed {old} to {new}")
+    return f"Renamed **{old}** to **{new}**. Its grades and scores moved with it."
+
+
+def _resolve_level(user, word):
+    gs, lv = prefs_db.load_gpa(user)
+    w = word.lower().replace("honours", "honors").replace("honour", "honor")
+    if w in ("regular", "normal"):
+        return lv[0]["level"], lv
+    key = "honor" if w.startswith("honor") else "dual" if w.startswith("dual") else "ap" if w.startswith("ap") else w
+    hits = [l["level"] for l in lv if key in l["level"].lower()]
+    return (hits[0] if hits else None), lv
+
+
+def _set_class_credits(user, c, n, actions):
+    names, err = _targets(user, c)
+    if err:
+        return err
+    for nm in names:
+        ok, msg = cdb.set_final_attrs(user, nm, credits=n)
+        if not ok:
+            return msg
+    actions.append(f"✅ Set credits to {n:g} for {len(names)} class(es)")
+    return f"Set **{', '.join(names)}** to **{n:g}** credit(s). Your GPA is updated."
+
+
+def _set_class_level(user, c, lvl, actions):
+    level, lv = _resolve_level(user, lvl)
+    if not level:
+        return "I don't have that level. Your levels: " + ", ".join(l["level"] for l in lv) + "."
+    names, err = _targets(user, c)
+    if err:
+        return err
+    for nm in names:
+        cdb.set_final_attrs(user, nm, level=level)
+    actions.append(f"✅ Set level to {level} for {len(names)} class(es)")
+    return f"Set **{', '.join(names)}** to **{level}**. Your weighted GPA is updated."
+
+
+def _add_report_grade(user, g, n, remark, actions):
+    scale, rules = prefs_db.load(user)
+    rows = [dict(r) for r in scale]
+    for r in rows:
+        if r["grade"].lower() == g.lower():
+            return f"**{r['grade']}** already exists. Say `set {r['grade']} to {n:g}` to move its cut-off."
+    rows.append({"grade": g, "min": n, "remark": (remark or "").strip()})
+    new, err = grading.clean_scale(rows)
+    if err:
+        return f"I couldn't add that: {err}"
+    prefs_db.save(user, new, rules)
+    actions.append(f"✅ Added grade {g} at {n:g}%")
+    return f"Added grade **{g}** starting at **{n:g}%**. Your scale: " + ", ".join(f"{r['grade']} ≥{r['min']:g}" for r in new) + "."
+
+
+def _remove_report_grade(user, g, actions):
+    scale, rules = prefs_db.load(user)
+    rows = [dict(r) for r in scale if r["grade"].lower() != g.lower()]
+    if len(rows) == len(scale):
+        return f'There is no grade "{g}" in your scale: ' + ", ".join(r["grade"] for r in scale) + "."
+    new, err = grading.clean_scale(rows)
+    if err:
+        return f"I can't remove it: {err}"
+    prefs_db.save(user, new, rules)
+    actions.append(f"✅ Removed grade {g}")
+    return f"Removed grade **{g}**. Your scale: " + ", ".join(f"{r['grade']} ≥{r['min']:g}" for r in new) + "."
+
+
+def _set_remark(user, g, remark, actions):
+    scale, rules = prefs_db.load(user)
+    rows, found = [], False
+    for r in scale:
+        if r["grade"].lower() == g.lower():
+            rows.append({**r, "remark": remark.strip()[:40]}); found = True
+        else:
+            rows.append(dict(r))
+    if not found:
+        return f'There is no grade "{g}" in your scale.'
+    new, err = grading.clean_scale(rows)
+    if err:
+        return f"I couldn't change that: {err}"
+    prefs_db.save(user, new, rules)
+    actions.append(f"✅ Changed the remark for {g}")
+    return f"The remark for **{g}** is now \"{remark.strip()[:40]}\"."
+
+
+def _set_gpa_cutoff(user, g, n, actions):
+    gs, lv = prefs_db.load_gpa(user)
+    rows, found = [], False
+    for r in gs:
+        if r["grade"].lower() == g.lower():
+            rows.append({**r, "min": n}); found = True
+        else:
+            rows.append(dict(r))
+    if not found:
+        return f'"{g.upper()}" isn\'t in your GPA scale.'
+    new, err = gpa_lib.clean_scale(rows)
+    if err:
+        return f"I couldn't change that: {err}"
+    prefs_db.save_gpa(user, new, lv)
+    actions.append(f"✅ GPA cut-off for {g.upper()} set to {n:g}%")
+    return f"Done. **{g.upper()}** now needs **{n:g}%** when you enter percentages for GPA."
+
+
+def _add_level(user, name, n, actions):
+    gs, lv = prefs_db.load_gpa(user)
+    name = " ".join(name.split()).strip(" .,!?")
+    if any(l["level"].lower() == name.lower() for l in lv):
+        return f'"{name}" already exists.'
+    new, err = gpa_lib.clean_levels([dict(l) for l in lv] + [{"level": name, "bonus": n}])
+    if err:
+        return f"I couldn't add that: {err}"
+    prefs_db.save_gpa(user, gs, new)
+    actions.append(f"✅ Added level {name}")
+    return f"Added the course level **{name}** with a **{n:g}** bonus."
+
+
+def _remove_level(user, name, actions):
+    gs, lv = prefs_db.load_gpa(user)
+    name = name.strip(" .,!?").lower()
+    keep = [dict(l) for l in lv if l["level"].lower() != name]
+    if len(keep) == len(lv):
+        return "There's no such level. Your levels: " + ", ".join(l["level"] for l in lv) + "."
+    name = next(l["level"] for l in lv if l["level"].lower() == name)
+    new, err = gpa_lib.clean_levels(keep)
+    if err:
+        return f"I can't remove it: {err}"
+    prefs_db.save_gpa(user, gs, new)
+    actions.append(f"✅ Removed level {name}")
+    return f"Removed the level **{name}**. Classes that used it go back to **{new[0]['level']}**."
+
+
+def _save_note(user, m, tabs, actions):
+    title = (m.group("t") or "Note").strip()
+    data, err = _run(user, "save_note", {"title": title, "content": m.group("b").strip()}, tabs, actions)
+    return f"I couldn't save that: {data.get('error')}" if err else f"Saved your note **{title}** to the Files tab."
+
+
+def _show_settings(user):
+    ui, scale, (gs, lv) = prefs_db.load_ui(user), prefs_db.load(user), prefs_db.load_gpa(user)
+    sc, rules = scale
+    on = lambda v: "on" if v else "off"
+    rows = [
+        ("Theme", prefs_db.load_theme(user)),
+        ("Grades shown as", prefs_db.load_display(user)),
+        ("Animations", f"{on(ui['animations'])} (transitions {on(ui['transitions'])}, click {on(ui['click_fx'])}, hover {on(ui['hover_fx'])}, typing {on(ui['typing_fx'])}, cards {on(ui['cards_fx'])})"),
+        ("Pass mark per subject", f"{rules['pass_subject']:g}%"),
+        ("Pass mark overall", f"{rules['pass_overall']:g}%"),
+        ("Must pass every subject", "yes" if rules["require_all"] else "no"),
+        ("Report-card grades", ", ".join(f"{g['grade']} ≥{g['min']:g}" for g in sc)),
+        ("Course levels", ", ".join(f"{l['level']} (+{l['bonus']:g})" for l in lv)),
+    ]
+    return _table(rows, ["Setting", "Now"]) + "\n\nTell me to change any of these, for example `set pass mark to 50` or `dark mode`."
+
+
+def _show_profile(user):
+    sm, my = overview.summary(user), cdb.list_classes(user)
+    n_files, _used = files_db.usage(user)
+    rows = [("Username", user), ("Email", auth_email(user)), ("Classes", f"{len(my['current'])} current, {len(my['previous'])} previous"),
+            ("Graded classes", f"{sm['graded']} of {sm['total']}"),
+            ("Average", "—" if sm["avg_percent"] is None else f"{sm['avg_percent']:g}%"),
+            ("GPA", "—" if sm["gpa"] is None else f"{sm['gpa']:.2f} (weighted {sm['gpa_weighted']:.2f})"), ("Files", n_files)]
+    return _table(rows, ["Profile", ""])
+
+
+def auth_email(user):
+    import auth
+    return auth.get_email(user) or "—"
+
+
+def _settings_tab_for(t):
+    if re.search(r"appearance|theme|effects?|animations?|dark|light", t):
+        return ST_APPEARANCE
+    if re.search(r"preference|reset", t):
+        return ST_PREFS
+    if re.search(r"data|export|download", t):
+        return ST_DATA
+    return ST_ACCOUNT
+
+
+def _open_settings(out, tab, text):
+    out["open_settings"] = True
+    out["settings_tab"] = tab
+    out["actions"].append("✅ Opened Settings")
+    out["text"] = text
+    return out
 
 
 # ----------------------------------------------------------------- confirmations
@@ -543,23 +792,30 @@ def _confirm(user, pending, out):
         out["actions"].append(f"✅ Deleted {pending['name']}")
         return f"Deleted **{pending['name']}**."
     if kind == "delete_all_grades":
+        for r in overview.class_table(user):
+            cdb.delete_final(user, r["name"])
         for g in cdb.list_grades(user):
             cdb.delete_grade(user, g["id"])
-        out["actions"].append("✅ Deleted all recorded grades")
-        return "All your recorded grades are deleted."
+        out["actions"].append("✅ Cleared all grades")
+        return "All your grades (class grades and test scores) are cleared. You can say `undo` to bring them back."
+    if kind == "delete_all_tests":
+        for g in cdb.list_grades(user):
+            cdb.delete_grade(user, g["id"])
+        out["actions"].append("✅ Deleted all test scores")
+        return "All your recorded test scores are deleted. You can say `undo` to bring them back."
     return "Okay."
 
 
 # ----------------------------------------------------------------- entry point
-def handle(user, text, tabs, state=None):
-    """One message to the assistant.
+def _handle_one(user, text, tabs, state=None):
+    """One command.
 
     Returns {"text","actions","nav","error","report","set_state","clear","logout","tabs"}. `state` is a dict the
     caller keeps between messages (used to remember a pending confirmation).
     """
     state = state if state is not None else {}
     out = {"text": "", "actions": [], "nav": None, "error": None, "report": None, "set_state": {},
-           "clear": False, "logout": False, "open_settings": False, "tabs": tabs}
+           "clear": False, "logout": False, "open_settings": False, "settings_tab": None, "tabs": tabs}
     raw = (text or "").strip()[:assistant.MAX_USER_CHARS]
     if not raw:
         out["error"] = "Type a message first."
@@ -577,11 +833,13 @@ def handle(user, text, tabs, state=None):
             return out
         # anything else cancels the pending action and is handled as a new command
 
-    if re.fullmatch(r"(?:please\s+)?(?:open|show|go to|take me to|view)\s+(?:my\s+)?(?:account\s+)?(?:settings|preferences|account)(?:\s+(?:tab|page|window))?", t):
-        out["open_settings"] = True
-        actions.append("✅ Opened Settings")
-        out["text"] = "Opening **Settings**."
-        return out
+    m = re.fullmatch(r"(?:please\s+)?(?:open|go to|take me to)\s+(?:my\s+)?(?P<w>(?:[a-z ]+\s+)?(?:settings|preferences|account|appearance|data))(?:\s+(?:tab|page|window|section))?", t)
+    if m and not _tab_for(m.group("w"), tabs):
+        return _open_settings(out, _settings_tab_for(m.group("w")), "Opening **Settings**.")
+    if re.fullmatch(r"(?:please\s+)?(?:download|export|get)\s+(?:a copy of\s+)?(?:all\s+)?(?:my\s+)?data", t):
+        return _open_settings(out, ST_DATA, "Opening **Settings → Your data**, where you can download everything as a JSON file.")
+    if re.fullmatch(r"(?:please\s+)?(?:send|email)\s+(?:me\s+)?(?:a\s+)?test\s+email", t):
+        return _open_settings(out, ST_ACCOUNT, "Opening **Settings → Account**. Open *Check that emails reach you* and press the button there.")
 
     m = GOTO.match(t)
     if m and _tab_for(m.group("t"), tabs):
@@ -600,15 +858,17 @@ def handle(user, text, tabs, state=None):
         out["logout"] = True
         out["text"] = "Logging you out…"
     elif re.search(r"\b(change|reset|update|forgot)\b.*\b(password|email)\b|\bdelete\b.*\baccount\b", t):
-        out["open_settings"] = True
-        actions.append("✅ Opened Settings")
-        out["text"] = ("For your security I don't change passwords, emails or accounts from chat. "
-                       "I've opened **Settings** (Account section), where you can do that safely.")
+        _open_settings(out, ST_ACCOUNT, "For your security I don't change passwords, emails or accounts from chat. "
+                                       "I've opened **Settings → Account**, where you can do that safely.")
     elif re.search(r"\b(undo|remove|delete)\b.*\blast grade\b", t):
         out["text"] = _undo_grade(user, actions)
-    elif re.search(r"\b(delete|remove|clear)\b.*\b(all|every)\b.*\bgrades\b", t):
+    elif re.search(r"\b(delete|remove|clear)\b.*\b(all|every)\b.*\b(test|quiz|quizzes|recorded)\b.*\b(scores?|grades?|results?)\b", t):
+        state["pending"] = {"kind": "delete_all_tests"}
+        out["text"] = "This will delete **all** your recorded test scores (not your class grades). Reply **yes** to confirm or **no** to cancel."
+    elif re.search(r"\b(delete|remove|clear|wipe)\b.*\b(all|every)\b.*\bgrades\b", t):
         state["pending"] = {"kind": "delete_all_grades"}
-        out["text"] = "This will delete **all** your recorded grades. Reply **yes** to confirm or **no** to cancel."
+        out["text"] = ("This will clear **all** your grades: the grade of every class and all recorded test scores. "
+                       "Reply **yes** to confirm or **no** to cancel. (You can undo it afterwards.)")
     elif (m := re.match(r"^(?:please\s+)?(?:remove|delete|drop)\s+(?:the\s+)?class\s+(?P<n>.+)$", t)):
         cls = _match_class(user, m.group("n"))
         if not cls:
@@ -626,6 +886,36 @@ def handle(user, text, tabs, state=None):
             out["text"] = f"Delete the file **{name}** permanently? Reply **yes** to confirm or **no** to cancel."
     elif (m := re.match(r"^(?:show|read|open|preview|view)\s+(?:the\s+)?file\s+(?P<n>.+)$", raw.lower())):
         out["text"] = _show_file(user, m.group("n"))
+    elif (m := NOTE.match(raw)):
+        out["text"] = _save_note(user, m, tabs, actions)
+    elif re.fullmatch(r"(?:show|what are|what is|what's|list|see)\s+(?:me\s+)?(?:all\s+)?(?:my\s+)?(?:current\s+)?settings|what can i change\??", t):
+        out["text"] = _show_settings(user)
+    elif re.fullmatch(r"(?:show|what is|what's|see)\s+(?:me\s+)?(?:my\s+)?(?:profile|account info|stats)|who am i\??", t):
+        out["text"] = _show_profile(user)
+    elif re.fullmatch(r"(?:show|what is|what's|see|list)\s+(?:me\s+)?(?:my\s+)?(?:current\s+)?(?:grading |grade |report card )?(?:scale|cut-?offs?|grades? scale)", t):
+        out["text"] = "Your report-card grade scale:\n\n" + _table([(g["grade"], f"{g['min']:g}%", g["remark"] or "—") for g in prefs_db.load(user)[0]], ["Grade", "From", "Remark"])
+    elif re.fullmatch(r"(?:show|what is|what's|see)\s+(?:me\s+)?(?:my\s+)?(?:current\s+)?pass(?:ing)?\s*(?:marks?|grades?|requirements?)", t):
+        r_ = prefs_db.load(user)[1]
+        out["text"] = (f"Pass mark per subject: **{r_['pass_subject']:g}%**, overall: **{r_['pass_overall']:g}%**. "
+                       f"Passing every subject is **{'required' if r_['require_all'] else 'not required'}**.")
+    elif (m := RENAME.match(raw)):
+        out["text"] = _rename_class(user, m.group("a"), m.group("b"), actions)
+    elif (m := CREDITS.match(t)):
+        out["text"] = _set_class_credits(user, m.group("c"), _num(m), actions)
+    elif (m := LEVEL.match(t)) and (m.group("c").strip() in ALL_WORDS or _match_class(user, m.group("c").strip(" .,!?"))):
+        out["text"] = _set_class_level(user, m.group("c"), m.group("l"), actions)
+    elif (m := GPA_CUT.match(t)):
+        out["text"] = _set_gpa_cutoff(user, m.group("g"), _num(m), actions)
+    elif (m := ADD_LEVEL.match(raw)):
+        out["text"] = _add_level(user, m.group("l"), _num(m), actions)
+    elif (m := REMOVE_LEVEL.match(raw)):
+        out["text"] = _remove_level(user, m.group("l"), actions)
+    elif (m := ADD_GRADE.match(raw)):
+        out["text"] = _add_report_grade(user, m.group("g"), _num(m), m.group("r"), actions)
+    elif (m := REMARK.match(raw)):
+        out["text"] = _set_remark(user, m.group("g"), m.group("r"), actions)
+    elif (m := REMOVE_GRADE.match(raw)) and m.group("g").lower() not in ("last", "all"):
+        out["text"] = _remove_report_grade(user, m.group("g"), actions)
     elif (m := REPORT.match(raw)):
         out["text"] = _report(user, m, raw, out)
     elif (txt := _theme_command(user, t, out)):
@@ -647,8 +937,9 @@ def handle(user, text, tabs, state=None):
         out["text"] = _set_level_bonus(user, m.group("l"), _num(m), actions)
     elif (m := re.match(rf"^(?:please\s+)?(?:set|change|make|update)\s+(?P<g>[a-f][+-]?)\s+(?:gpa\s+)?points?\s*(?:to|at|=)?\s*(?P<n>{NUM})$", t)):
         out["text"] = _set_gpa_points(user, m.group("g"), _num(m), actions)
-    elif (m := re.match(rf"^(?:please\s+)?(?:set|change|make|update)\s+(?:grade\s+)?(?P<g>[a-f][+-]?)\s+(?:to|at|=|start(?:s)?(?:\s+at)?|minimum|min|needs?|requires?)\s*(?P<n>{NUM})\s*%?$", t)) \
-            or (m := re.match(rf"^(?:grade\s+)?(?P<g>[a-f][+-]?)\s+(?:needs?|requires?|starts?\s+at)\s+(?P<n>{NUM})\s*%?$", t)):
+    elif ((m := re.match(rf"^(?:please\s+)?(?:set|change|make|update)\s+(?:grade\s+)?(?P<g>\S+)\s+(?:to|at|=|start(?:s)?(?:\s+at)?|minimum|min|needs?|requires?)\s*(?P<n>{NUM})\s*%?$", t))
+          or (m := re.match(rf"^(?:grade\s+)?(?P<g>\S+)\s+(?:needs?|requires?|starts?\s+at)\s+(?P<n>{NUM})\s*%?$", t))) \
+            and _grade_like(user, m.group("g"), t.startswith(("set grade", "change grade", "grade "))):
         out["text"] = _set_grade_cutoff(user, m.group("g"), _num(m), actions)
     elif (txt := _pass_rules(user, t, actions)):
         out["text"] = txt
@@ -656,6 +947,8 @@ def handle(user, text, tabs, state=None):
         out["text"] = _clear_class_grade(user, m.group("c"), tabs, actions)
     elif (m := SET_GRADE_A.match(t)) or (m := SET_GRADE_D.match(t)) or (m := SET_GRADE_C.match(t)) \
             or ((m := SET_GRADE_B.match(t)) and not re.search(r"\b(?:pass|cut|minimum|point)", t)):
+        out["text"] = _set_class_grade(user, m.group("c"), m.group("g"), tabs, actions)
+    elif (m := SET_GRADE_E.match(t)) and len(m.group("c").strip()) >= 3 and _match_class(user, m.group("c").strip(" .,!?")):
         out["text"] = _set_class_grade(user, m.group("c"), m.group("g"), tabs, actions)
     elif (m := RECORD.match(t)):
         out["text"] = _record(user, m, tabs, actions)
@@ -685,3 +978,191 @@ def handle(user, text, tabs, state=None):
     else:
         out["text"] = "Sorry, I didn't catch that.\n\n" + HELP
     return out
+
+
+
+# ================================================================= outer layer: typos, several commands, undo, suggestions
+import difflib
+
+_VOCAB = sorted({
+    "animations", "animation", "transitions", "transition", "effects", "dark", "light", "theme", "mode", "display", "percentages",
+    "percentage", "letters", "letter", "grades", "grade", "report", "study", "schedule", "improve", "password", "settings",
+    "preferences", "account", "classes", "subject", "subjects", "current", "previous", "finished", "completed", "remove", "delete",
+    "rename", "credits", "honors", "regular", "overall", "minimum", "points", "bonus", "cutoff", "scale", "reset", "defaults",
+    "download", "revert", "change", "switch", "enable", "disable", "please", "files", "create", "passing", "every", "hover",
+    "typing", "click", "weakest", "strongest", "progress", "summary", "average", "recorded", "scores", "profile", "resetting",
+    "appearance", "gpa", "level", "levels", "remark", "undo",
+})
+_COMMAND_START = (r"(?:please\s+)?(?:also\s+)?(?:set|turn|add|move|remove|delete|clear|change|switch|use|make|show|go|open|record|log|"
+                  r"list|rename|reset|undo|mark|put|my|i|what|how)\b")
+_SPLIT = re.compile(
+    r"\s*(?:;|\n+|\bthen\b|\band\s+then\b|\band\s+(?=(?:" + _COMMAND_START + r"|[a-f][+-]?\s+(?:to|at|needs?)\b|"
+    r"(?:dark|light|auto|automatic)\s+(?:mode|theme)\b|(?:animations?|effects?|transitions?|typing|hover|click)\b.*\b(?:on|off)\b|"
+    r"(?:(?!(?:then|and|set|make|turn|add)\b)\S+\s+){0,2}(?!(?:then|and|set)\b)\S+\s+(?:grade|credits?)\s+(?:is|to|=))))\s*", re.I)
+SUGGEST = [
+    (r"pass|passing", "`set pass mark to 50` · `overall pass mark 45` · `must pass every subject off`"),
+    (r"grade|grades|score|marks?", "`my math grade is B+` · `I got 45/50 in math` · `clear my art grade` · `list my grades`"),
+    (r"class|classes|subject|course", "`add classes physics, art` · `move art to previous` · `rename math to maths` · `remove class art`"),
+    (r"credit|honou?r|\bap\b|\bib\b|level|weight", "`set math credits to 0.5` · `make physics honors` · `set honors bonus to 0.5`"),
+    (r"gpa", "`what's my GPA?` · `gpa A, B+, 92%` · `set gpa cutoff for A- to 91`"),
+    (r"report|card", "`make a report card` · `make a report card for Sam, roll 12: math 80, science 75`"),
+    (r"plan|schedule|study|improv|tip|advice", "`study plan 10 hours and save it` · `how can I improve?`"),
+    (r"dark|light|theme|mode|animation|effect|transition|hover|click|typing", "`dark mode` · `light mode` · `turn animations off` · `typing effect off`"),
+    (r"file|pdf|document|note", "`list my files` · `show file notes.txt` · `save a note called ideas: study more`"),
+    (r"setting|prefer|option|change", "`show my settings` · `open settings` · `show grades as percentages`"),
+    (r"scale|cut-?off|remark", "`set A to 85` · `add grade A++ at 95` · `remove grade E` · `show my grading scale`"),
+]
+
+
+def _within(a, b, limit):
+    """Damerau-Levenshtein distance <= limit (adjacent swaps count as one edit)."""
+    if abs(len(a) - len(b)) > limit:
+        return False
+    prev2, prev = None, list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        prev2, prev = prev, cur
+    return prev[len(b)] <= limit
+
+
+def _fix_typos(raw, protected):
+    """Correct small typos in command words (only before any ':' so notes and report subjects are left alone)."""
+    head, sep, tail = raw.partition(":")
+
+    def fix(m):
+        w = m.group(0)
+        lw = w.lower()
+        if len(lw) < 5 or lw in _VOCAB or lw in protected:
+            return w
+        limit = 1 if len(lw) < 8 else 2
+        for v in _VOCAB:
+            if _within(lw, v, limit):
+                return v
+        return w
+
+    return re.sub(r"[A-Za-z']+", fix, head) + sep + tail
+
+
+def _protected_words(user):
+    words = set()
+    for n in _all_class_names(user) + [f["name"] for f in files_db.list_files(user)]:
+        words.update(re.findall(r"[a-z']+", n.lower()))
+    return words
+
+
+def _split_commands(raw):
+    # report cards and notes contain commas/"and"/colons that are part of the content: keep them whole
+    if ":" in raw and re.search(r"report\s*card|note", raw.split(":", 1)[0], re.I):
+        return [raw]
+    parts = [p.strip(" ,.") for p in _SPLIT.split(raw) if p and p.strip(" ,.")]
+    return parts[:6] or [raw]
+
+
+def _suggest(t):
+    words = [ex for pat, ex in SUGGEST if re.search(pat, t)]
+    if not words:
+        return "Sorry, I didn't catch that.\n\n" + HELP
+    return ("Sorry, I'm not sure what you want me to do. I work with short commands. Since your message mentions something I know, "
+            "you could try:\n\n" + "\n".join(f"- {w}" for w in words[:3]) + "\n\nType `help` for everything I can do.")
+
+
+def _snapshot(user):
+    return {"cdb": cdb.snapshot(user), "prefs": prefs_db.export_all(user)}
+
+
+def _prefs_state(user):
+    st = {"theme_mode": prefs_db.load_theme(user), "display_mode": prefs_db.load_display(user)}
+    st.update({f"ui_{k}": v for k, v in prefs_db.load_ui(user).items()})
+    return st
+
+
+UNDO_RE = re.compile(r"^(?:please\s+)?(?:undo|revert|take (?:that|it) back|go back)(?:\s+(?:that|it|this|the last (?:change|action|thing)|my last (?:change|action)|last (?:change|action)))?$")
+
+
+def handle(user, text, tabs, state=None):
+    """One message from the user. May contain several requests ("set math to A and turn on dark mode").
+
+    Returns {"text","actions","nav","error","report","set_state","clear","logout","open_settings","settings_tab"}.
+    `state` is a dict the caller keeps between messages (pending confirmation and the undo history).
+    """
+    state = state if state is not None else {}
+    raw = (text or "").strip()[:assistant.MAX_USER_CHARS]
+    t_whole = " ".join(raw.lower().split())
+
+    # a plain yes/no answers a pending question about the whole message
+    if state.get("pending") and (t_whole in YES or t_whole in NO):
+        pend = state["pending"]
+        before = _snapshot(user)
+        res = _handle_one(user, raw, tabs, state)
+        if _snapshot(user) != before:   # a confirmed deletion can be undone too
+            label = {"remove_class": f"remove class {pend.get('name', '')}", "delete_all_grades": "clear all grades",
+                     "delete_all_tests": "delete all test scores", "delete_file": f"delete file {pend.get('name', '')}"}.get(pend["kind"], "confirmed change")
+            state["undo_group"] = state.get("undo_group", 0) + 1
+            state.setdefault("undo", []).append({"snap": before, "label": label, "group": state["undo_group"]})
+            del state["undo"][:-30]
+        return res
+
+    if UNDO_RE.match(t_whole):
+        out = {"text": "", "actions": [], "nav": None, "error": None, "report": None, "set_state": {}, "clear": False,
+               "logout": False, "open_settings": False, "settings_tab": None, "tabs": tabs}
+        stack = state.get("undo") or []
+        if not stack:
+            out["text"] = "There's nothing to undo yet."
+            return out
+        item = stack.pop()
+        while stack and stack[-1].get("group") == item.get("group"):   # every change made by that one message
+            item = stack.pop()
+        cdb.restore(user, item["snap"]["cdb"])
+        prefs_db.import_all(user, item["snap"]["prefs"])
+        out["set_state"] = _prefs_state(user)
+        out["actions"].append("✅ Undid your last change")
+        out["text"] = f"Undid your last change (*{item['label']}*). Say `undo` again to go back one more step."
+        return out
+
+    if not raw:
+        return _handle_one(user, raw, tabs, state)
+
+    protected = _protected_words(user)
+    parts = _split_commands(raw)
+    state["undo_group"] = state.get("undo_group", 0) + 1
+    results = []
+    for i, part in enumerate(parts):
+        fixed = _fix_typos(part, protected)
+        before = _snapshot(user)
+        res = _handle_one(user, fixed, tabs, state)
+        if _snapshot(user) != before:
+            state.setdefault("undo", []).append({"snap": before, "label": raw[:60], "group": state["undo_group"]})
+            del state["undo"][:-30]
+        if state.get("pending") and i < len(parts) - 1:   # a yes/no question can only be asked as the last step
+            state.pop("pending", None)
+            res["text"] += "\n\n(I skipped that one because it needs a yes or no from you. Ask for it on its own.)"
+        results.append((part, res))
+
+    if len(results) == 1:
+        res = results[0][1]
+        if res["text"].startswith("Sorry, I didn't catch that."):
+            res["text"] = _suggest(" ".join(raw.lower().split()))
+        return res
+
+    merged = {"text": "", "actions": [], "nav": None, "error": None, "report": None, "set_state": {}, "clear": False,
+              "logout": False, "open_settings": False, "settings_tab": None, "tabs": tabs}
+    lines = []
+    for n, (part, res) in enumerate(results, 1):
+        body = res["text"]
+        if body.startswith("Sorry, I didn't catch that."):
+            body = f"I didn't understand \"{part}\". " + "Try `help` to see what I can do."
+        lines.append(f"**{n}.** {body}")
+        merged["actions"] += res["actions"]
+        merged["set_state"].update(res["set_state"])
+        merged["nav"] = res["nav"] or merged["nav"]
+        merged["report"] = res["report"] or merged["report"]
+        merged["settings_tab"] = res["settings_tab"] or merged["settings_tab"]
+        for flag in ("clear", "logout", "open_settings"):
+            merged[flag] = merged[flag] or res[flag]
+    merged["text"] = "\n\n".join(lines)
+    return merged

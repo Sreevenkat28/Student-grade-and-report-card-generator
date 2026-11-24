@@ -16,9 +16,15 @@ Grades: A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <4
 Run `python3 make_admin.py` on your own computer to make an account the admin. It writes a git-ignored `.admin_device` file; with `streamlit run streamlit_app.py` that account then gets an **Admin** tab (list accounts, delete one, delete all others). The deployed app never has this file, so nobody online can be an admin.
 
 ## Study assistant
-The Assistant tab is a chat-style command assistant that works for everyone with no API key. It understands plain requests and acts on your own data: record or undo grades, add/move/remove classes, make report cards, work out GPA, build and save study plans, change pass marks, grade cut-offs, GPA points and weights, switch how grades are shown, turn animations on or off, read or delete your files, and open any tab (type `help` for examples). Removing a class or file, or deleting all grades, asks for a "yes" first. It never changes passwords or emails or deletes your account; it sends you to the Account tab for that.
+The Assistant tab is a chat-style command assistant that works for everyone with no API key and no cost. It does what you ask in plain words and tells you what it changed. It can:
+- set or clear any class's grade (`my math grade is B+`, `set physics to 87%`), credits and level (`make physics honors`, `make all classes regular`), rename or move or remove classes, record test scores;
+- build report cards (`make a report card for Sam Lee, roll 12, exam Finals: math 80/100, science 45/50`), work out GPA, make study plans, give advice, save notes;
+- change every grading setting (pass marks, grade cut-offs, add or remove grades, remarks, GPA points and cut-offs, course levels and their bonuses), show grades as letters or percentages, switch dark mode and each animation;
+- open any tab or the right section of Settings, list or show or delete files, show your settings and profile.
 
-It uses pattern matching, not a language model, so it works best with short commands. Optional: if the app owner adds `ANTHROPIC_API_KEY` to Secrets (see `.streamlit/secrets.toml.example`), a switch appears to use Claude instead. That mode is billed to the key's owner, sends messages and grades to Anthropic, and is limited to 30 messages per hour per user.
+It also: handles **several requests in one message** (`my math grade is B+ and turn on dark mode`), forgives small **typos**, asks for a **yes** before deleting anything, and has an **undo** (say `undo`, or press the button) that reverses the whole last message, including confirmed deletions. It never changes passwords or emails or deletes your account; it opens Settings instead. Type `help` for the full list.
+
+It uses pattern matching, not a language model, so it works best with short, direct commands; if it can't tell what you mean it suggests commands to try. Optional: if the app owner adds `ANTHROPIC_API_KEY` to Secrets (see `.streamlit/secrets.toml.example`), a switch appears to use Claude for free-form requests instead. That mode is billed to the key's owner, sends messages and grades to Anthropic, and is limited to 30 messages per hour per user.
 
 ## Built-in help
 Most labels have a small **?** icon, and the table column headings explain themselves when you hover them, so every setting and number is described where you use it.
@@ -27,7 +33,7 @@ Most labels have a small **?** icon, and the table column headings explain thems
 Switch with the 🌙 / ☀️ button next to your name, or choose Light / Dark / Auto (follows your device) in Settings → Appearance, or tell the assistant `dark mode`. The choice is saved to your account.
 
 ## Tests
-`python tests/test_tabs.py` checks that every tab renders (uses a throwaway database).
+`python tests/test_tabs.py` checks that every tab renders, and `python tests/test_assistant.py` checks the assistant's commands, multi-request messages, confirmations and undo (both use a throwaway database).
 
 ## Look and animations
 The interface uses an Apple-style design: SF system font, large rounded corners, frosted-glass panels and macOS-style segmented tabs.
