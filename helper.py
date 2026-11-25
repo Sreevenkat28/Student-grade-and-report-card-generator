@@ -837,7 +837,7 @@ def _handle_one(user, text, tabs, state=None):
     if m and not _tab_for(m.group("w"), tabs):
         return _open_settings(out, _settings_tab_for(m.group("w")), "Opening **Settings**.")
     if re.fullmatch(r"(?:please\s+)?(?:download|export|get)\s+(?:a copy of\s+)?(?:all\s+)?(?:my\s+)?data", t):
-        return _open_settings(out, ST_DATA, "Opening **Settings → Your data**, where you can download everything as a JSON file.")
+        return _open_settings(out, ST_DATA, "Opening **Settings → Your data**, where you can download everything as a PDF, picture, spreadsheet, JSON and more.")
     if re.fullmatch(r"(?:please\s+)?(?:send|email)\s+(?:me\s+)?(?:a\s+)?test\s+email", t):
         return _open_settings(out, ST_ACCOUNT, "Opening **Settings → Account**. Open *Check that emails reach you* and press the button there.")
 

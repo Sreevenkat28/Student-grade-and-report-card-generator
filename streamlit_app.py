@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 import assistant as ai
 import auth
 import classes_db as cdb
+import exporter
 import files_db
 import helper
 import overview
@@ -664,6 +665,23 @@ def _export_my_data(u):
     }
 
 
+def _my_data_doc(u):
+    data = _export_my_data(u)
+
+    def table(rows):
+        df = pd.DataFrame(rows)
+        df.columns = [str(c).replace("_", " ").capitalize() for c in df.columns]
+        return df
+
+    classes = [{"class": n, "status": status} for status, names in data["classes"].items() for n in names]
+    return exporter.make_doc(
+        "My grades data", info=[("Username", u), ("Email", data["email"]), ("Exported", data["exported"])],
+        tables=[("Class grades", table(data["class_grades"])), ("Recorded scores", table(data["recorded_scores"])),
+                ("Classes", table(classes)), ("Report card grade scale", table(data["grading_rules"]["scale"])),
+                ("Files (names only)", table(data["files"]))],
+        raw=data)
+
+
 @st.dialog("⚙️ Settings", width="large")
 def settings_dialog():
     u = st.session_state["user"]
@@ -771,9 +789,9 @@ def settings_dialog():
 
     with t_data:
         st.markdown("**⬇ Download your data**")
-        st.caption("Your classes, grades, scores, grading rules and preferences as a JSON file (file names only, not file contents).")
-        st.download_button("⬇ Download my data (JSON)", json.dumps(_export_my_data(u), indent=2), file_name=f"{u}_grades_data.json",
-                           mime="application/json", type="primary", width="stretch")
+        st.caption("Your classes, grades and scores as a PDF, picture, spreadsheet and more (file names only, not file "
+                   "contents). The JSON choice also includes your grading rules and preferences.")
+        exporter.download_ui(st, _my_data_doc(u), f"{u}_grades_data", "mydata")
         st.divider()
         st.markdown("**🧹 Clear grades**")
         st.caption("Removes the grade you typed for every class and all recorded test scores. Your classes stay.")
@@ -909,9 +927,15 @@ def _render_report(student, res, mode):
             if res["failed"]:
                 msg += f" — failed in {', '.join(res['failed'])}"
             st.error(msg)
-    st.download_button("Download as CSV", df.to_csv(index=False),
-                       file_name=f"report_card_{student['name'].strip().replace(' ', '_')}.csv",
-                       mime="text/csv", type="primary", width="stretch")
+    remarks = res["remark"]
+    if not res["passed"] and res["failed"]:
+        remarks += f" (failed in {', '.join(res['failed'])})"
+    doc = exporter.make_doc(
+        "Report Card", subtitle=student["exam"] or "Academic Report",
+        info=[("Name", student["name"]), ("Roll / ID", student["roll"]), ("Class", student["cls"]),
+              ("Date", student["date"])] + metrics + [("Remarks", remarks)],
+        tables=[("Subjects", df)])
+    exporter.download_ui(st, doc, f"report_card_{student['name'].strip()}", "report")
 
 
 with tab_report:

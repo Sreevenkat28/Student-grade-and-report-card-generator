@@ -4,13 +4,16 @@ Student Grade & Report Card Generator. Enter subject marks and get the percentag
 
 - **Streamlit app:** `streamlit_app.py` (run with `pip install -r requirements.txt && streamlit run streamlit_app.py`)
 - The Streamlit app: sign up with email + username + password, then enter the 6-digit code emailed to you to confirm your email (the account is created and you're logged in once it's confirmed), then log in with your username or email and password. "Forgot password?" emails a 6-digit code (valid 10 min) to reset it.
-- After sign-up it asks for your current and previous classes. Tabs: **✏️ My grades** (type one grade per class, a letter like B+ or a percentage like 87%; the Report card, GPA, My classes, summary bar, assistant and profile all update from it at once), **Report card** (show grades as letters, percentages or both; your choice is remembered), **GPA** (unweighted + weighted on the standard 4.0 scale; enter grades as letters or percentages), **Grading rules** (edit report-card grade cut-offs and pass marks, plus the whole GPA scale: points per grade, percentage cut-offs and weighted bonuses per course level), **My classes** (plus recorded test grades), **Files** (upload and keep any file type), **Assistant** (Claude-powered study helper), **Settings** window (click your name, then ⚙️ Settings): appearance (light/dark/auto and effects), preferences (how grades are shown, reset rules), account (change password or email, test email, delete account) and your data (download as JSON, clear grades).
+- After sign-up it asks for your current and previous classes. Tabs: **✏️ My grades** (type one grade per class, a letter like B+ or a percentage like 87%; the Report card, GPA, My classes, summary bar, assistant and profile all update from it at once), **Report card** (show grades as letters, percentages or both; your choice is remembered), **GPA** (unweighted + weighted on the standard 4.0 scale; enter grades as letters or percentages), **Grading rules** (edit report-card grade cut-offs and pass marks, plus the whole GPA scale: points per grade, percentage cut-offs and weighted bonuses per course level), **My classes** (plus recorded test grades), **Files** (upload and keep any file type), **Assistant** (Claude-powered study helper), **Settings** window (click your name, then ⚙️ Settings): appearance (light/dark/auto and effects), preferences (how grades are shown, reset rules), account (change password or email, test email, delete account) and your data (download, clear grades).
 - Codes are emailed from your own Gmail through a Google Apps Script (`apps_script/Code.gs`, setup steps are in its header) or via SMTP. Put the settings in Streamlit Cloud -> App settings -> Secrets (see `.streamlit/secrets.toml.example`). Addresses are checked before sending: format, disposable-mail domains, common typos (gmial.com) and DNS (the domain must accept mail). For testing only, `dev_show_code = true` shows the code on screen instead of emailing it.
 - Accounts are stored in a local SQLite file (`users.db`), which is NOT persistent on Streamlit Community Cloud: accounts reset when the app restarts.
 - **Static web version (no login):** open `index.html` in a browser (uses `grading.js`, `app.js`, `style.css`)
 
 Pass rule: at least 40% in every subject and overall.
 Grades: A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <40
+
+## Downloads
+The report card, your data (Settings → Your data), and a teacher's gradebook and student reports can each be downloaded as PDF, picture (PNG or JPG), Excel, Word, CSV, web page, plain text or JSON: pick the type, then press Download. Uploaded files download as the original file.
 
 ## Roles
 Everyone uses the same login screen; the account decides the role.
@@ -45,7 +48,7 @@ Most labels have a small **?** icon, and the table column headings explain thems
 Switch with the 🌙 / ☀️ button next to your name, or choose Light / Dark / Auto (follows your device) in Settings → Appearance, or tell the assistant `dark mode`. The choice is saved to your account.
 
 ## Tests
-`python tests/test_roles.py` checks role permissions and screens, `python tests/test_tabs.py` checks that every tab renders, and `python tests/test_assistant.py` checks the assistant's commands, multi-request messages, confirmations and undo (both use a throwaway database).
+`python tests/test_downloads.py` checks every download type, `python tests/test_roles.py` checks role permissions and screens, `python tests/test_tabs.py` checks that every tab renders, and `python tests/test_assistant.py` checks the assistant's commands, multi-request messages, confirmations and undo (both use a throwaway database).
 
 ## Look and animations
 The interface uses an Apple-style design: SF system font, large rounded corners, frosted-glass panels and macOS-style segmented tabs.

@@ -6,6 +6,7 @@ import streamlit as st
 
 import auth
 import classes_db as cdb
+import exporter
 import grading
 import prefs_db
 import rooms_db
@@ -13,12 +14,6 @@ import rooms_db
 
 def _date(ts):
     return datetime.fromtimestamp(ts).strftime("%d %b %Y")
-
-
-def _safe_cell(text):
-    """Stop spreadsheet programs from running a downloaded value as a formula."""
-    text = str(text)
-    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
 
 
 def _files(user, room_id, key_prefix, can_delete=False):
@@ -109,9 +104,10 @@ def teaching_tab(user):
                         st.rerun()
                     except ValueError as e:
                         st.error(str(e))
-            export = frame.rename(columns={f"a{a['id']}": _safe_cell(f"{a['title']} / {a['max']:g}") for a in book["assignments"]})
-            st.download_button("⬇ Export gradebook (CSV)", export.to_csv(index=False), file_name="gradebook.csv",
-                               mime="text/csv", width="stretch", key=f"csv_{rid}")
+            export = frame.rename(columns={f"a{a['id']}": f"{a['title']} / {a['max']:g}" for a in book["assignments"]})
+            doc = exporter.make_doc(f"Gradebook: {room['name']}", info=[("Date", f"{datetime.now():%d %b %Y}")],
+                                    tables=[("Scores", export)])
+            exporter.download_ui(st, doc, f"gradebook_{room['name']}", f"book_{rid}")
         if book["assignments"]:
             with st.expander("Delete an assignment"):
                 aid = st.selectbox("Assignment", [a["id"] for a in book["assignments"]], key=f"del_a_{rid}",
@@ -161,9 +157,12 @@ def teaching_tab(user):
                     m1.metric("Percentage", f"{res['pct']}%")
                     m2.metric("Grade", res["grade"])
                     m3.metric("Result", "PASS" if res["passed"] else "FAIL")
-                    df["Assignment"] = df["Assignment"].map(_safe_cell)
-                    st.download_button("⬇ Download report (CSV)", df.to_csv(index=False), file_name=f"report_{who}.csv",
-                                       mime="text/csv", width="stretch", key=f"repcsv_{rid}")
+                    doc = exporter.make_doc(
+                        f"Student report: {who}", subtitle=room["name"],
+                        info=[("Percentage", f"{res['pct']}%"), ("Grade", res["grade"]),
+                              ("Result", "PASS" if res["passed"] else "FAIL"), ("Date", f"{datetime.now():%d %b %Y}")],
+                        tables=[("Assignments", df)])
+                    exporter.download_ui(st, doc, f"report_{who}", f"rep_{rid}")
 
     with t_news:
         with st.form(f"news_{rid}", clear_on_submit=True):

@@ -3,3 +3,6 @@ pandas
 dnspython
 anthropic
 pypdf
+openpyxl
+python-docx
+pillow>=10.1
