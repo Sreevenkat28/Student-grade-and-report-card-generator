@@ -473,7 +473,6 @@ def login_screen():
             uname = st.text_input("Username", help="A short nickname: 3-30 letters, numbers, _ . or -. You can log in with it instead of your email.")
             pw = st.text_input("Password", type="password", key="su_pw", help="Any length, any characters. Keep it private.")
             pw2 = st.text_input("Confirm password", type="password", key="su_pw2", help="Type the same password again to avoid typos.")
-            st.caption("The app owner can view and manage accounts and the data saved in them.")
             if st.form_submit_button("Send me a confirmation code", type="primary", width="stretch"):
                 ok, msg, email_n, uname_n = auth.check_signup(email, uname)
                 err = msg if not ok else (auth.check_password(pw) or ("Passwords do not match." if pw != pw2 else ""))
