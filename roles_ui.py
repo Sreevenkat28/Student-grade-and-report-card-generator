@@ -6,6 +6,7 @@ import streamlit as st
 
 import auth
 import classes_db as cdb
+import cleanup
 import exporter
 import grading
 import prefs_db
@@ -268,6 +269,33 @@ def classrooms_tab(user):
 
 
 # ------------------------------------------------------------------ admin (owner's device only)
+def _admin_room_contents(admin_user, rooms):
+    """Delete single things inside any classroom."""
+    st.markdown("**Delete something inside a classroom**")
+    rid = st.selectbox("Classroom", [r["id"] for r in rooms], index=None, placeholder="Choose a classroom",
+                       format_func=lambda i: next(f"{r['teacher']} · {r['name']}" for r in rooms if r["id"] == i),
+                       key="adm_inside_room")
+    if rid is None:
+        return
+    groups = [
+        ("Assignment", {a["id"]: a["title"] for a in rooms_db.gradebook(admin_user, rid)["assignments"]},
+         rooms_db.delete_assignment),
+        ("Announcement", {a["id"]: a["text"][:60] for a in rooms_db.announcements(admin_user, rid)},
+         rooms_db.delete_announcement),
+        ("Shared file", {m["id"]: m["name"] for m in rooms_db.materials(admin_user, rid)}, rooms_db.delete_material),
+        ("Student", {s: s for s in rooms_db.roster(admin_user, rid)}, rooms_db.remove_student),
+    ]
+    for label, items, remove in groups:
+        c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+        chosen = c1.selectbox(label, list(items), index=None, format_func=lambda i, items=items: items[i],
+                              placeholder="Choose one" if items else "Nothing here", key=f"adm_in_{label}_{rid}")
+        if c2.button("🗑 Delete", disabled=chosen is None, width="stretch", key=f"adm_in_btn_{label}_{rid}"):
+            remove(admin_user, rid, chosen)
+            auth.log_event(admin_user, f"deleted a classroom {label.lower()}: {items[chosen]}")
+            st.session_state.pop(f"adm_in_{label}_{rid}", None)
+            st.rerun()
+
+
 def admin_tab(admin_user, viewing_user, view_as):
     """`admin_user` is the device owner. `view_as(username)` switches the app to look at another account."""
     if not auth.is_admin(admin_user):
@@ -296,6 +324,16 @@ def admin_tab(admin_user, viewing_user, view_as):
                 auth.delete_member(target)
                 st.session_state.pop("adm_target", None)
                 st.rerun()
+            with st.expander("Delete some of their data (keeps the account)"):
+                picked = st.multiselect("What to delete", cleanup.choices(target), format_func=cleanup.LABELS.get,
+                                        key=f"adm_wipe_{target}", placeholder="Choose one or more")
+                sure = st.checkbox("Yes, delete these. This cannot be undone.", key=f"adm_sure_{target}")
+                if st.button("Delete selected", disabled=not (picked and sure), key=f"adm_wipebtn_{target}"):
+                    cleanup.delete(target, picked, actor=admin_user)
+                    st.session_state.pop(f"adm_wipe_{target}", None)
+                    st.session_state.pop(f"adm_sure_{target}", None)
+                    st.toast(f"Deleted from {target}.")
+                    st.rerun()
         elif not others:
             st.caption("No other accounts yet. Sign up a test student and a test teacher to try the roles.")
     with st.container(border=True, key="card_admin_activity"):
@@ -304,6 +342,9 @@ def admin_tab(admin_user, viewing_user, view_as):
         if events:
             st.dataframe(pd.DataFrame([{"When": datetime.fromtimestamp(t).strftime("%d %b %H:%M"), "Account": u, "What": e}
                                        for t, u, e in events]), width="stretch", hide_index=True)
+            if st.button("🗑 Clear activity log", key="adm_clear_log"):
+                auth.clear_events(admin_user)
+                st.rerun()
         else:
             st.caption("Nothing yet.")
     with st.container(border=True, key="card_admin_rooms"):
@@ -317,6 +358,7 @@ def admin_tab(admin_user, viewing_user, view_as):
             if st.button("Delete classroom", disabled=rid is None, key="adm_del_room"):
                 rooms_db.admin_delete_room(admin_user, rid)
                 st.rerun()
+            _admin_room_contents(admin_user, rooms)
         else:
             st.caption("No classrooms yet.")
     with st.container(border=True, key="card_admin_wipe"):

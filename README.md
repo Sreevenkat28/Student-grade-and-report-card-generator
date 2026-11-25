@@ -15,6 +15,12 @@ Grades: A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <4
 ## Downloads
 The report card, your data (Settings → Your data), and a teacher's gradebook and student reports can each be downloaded as PDF, picture (PNG or JPG), Excel, Word, CSV, web page, plain text or JSON: pick the type, then press Download. Uploaded files download as the original file.
 
+## Deleting
+- **Anyone:** delete the report card (button under it, or tell the assistant `delete my report card`), single classes, test scores and files in their tabs, several things at once in **Settings → Your data → Delete things**, or the whole account in **Settings → Account**.
+- **Students** can also leave a classroom.
+- **Teachers** can also delete their classrooms, assignments, announcements, shared files and remove students (**Teaching** tab).
+- **Admin** can also delete any account, selected data from any account, any classroom or anything inside it, the activity log, or all other accounts (**Admin** tab).
+
 ## Roles
 Everyone uses the same login screen; the account decides the role.
 
@@ -48,7 +54,7 @@ Most labels have a small **?** icon, and the table column headings explain thems
 Switch with the 🌙 / ☀️ button next to your name, or choose Light / Dark / Auto (follows your device) in Settings → Appearance, or tell the assistant `dark mode`. The choice is saved to your account.
 
 ## Tests
-`python tests/test_downloads.py` checks every download type, `python tests/test_roles.py` checks role permissions and screens, `python tests/test_tabs.py` checks that every tab renders, and `python tests/test_assistant.py` checks the assistant's commands, multi-request messages, confirmations and undo (both use a throwaway database).
+`python tests/test_downloads.py` checks every download type, `python tests/test_deletes.py` checks deleting, `python tests/test_roles.py` checks role permissions and screens, `python tests/test_tabs.py` checks that every tab renders, and `python tests/test_assistant.py` checks the assistant's commands, multi-request messages, confirmations and undo (both use a throwaway database).
 
 ## Look and animations
 The interface uses an Apple-style design: SF system font, large rounded corners, frosted-glass panels and macOS-style segmented tabs.

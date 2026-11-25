@@ -29,7 +29,7 @@ HELP = """Tell me what to change in plain words. I can do several things in one 
 
 **Reports, GPA and advice**
 - `how am I doing?` · `weakest class` · `what's my GPA?` · `gpa A, B+, 92%`
-- `make a report card` · `make a report card for Sam, roll 12, exam Finals: math 80/100, science 45/50`
+- `delete my report card` · `make a report card` · `make a report card for Sam, roll 12, exam Finals: math 80/100, science 45/50`
 - `study plan 12 hours and save it` · `how can I improve?` · `save a note called ideas: more practice tests`
 
 **Grading rules**
@@ -860,6 +860,10 @@ def _handle_one(user, text, tabs, state=None):
     elif re.search(r"\b(change|reset|update|forgot)\b.*\b(password|email)\b|\bdelete\b.*\baccount\b", t):
         _open_settings(out, ST_ACCOUNT, "For your security I don't change passwords, emails or accounts from chat. "
                                        "I've opened **Settings → Account**, where you can do that safely.")
+    elif re.fullmatch(r"(?:please\s+)?(?:delete|remove|clear)\s+(?:my\s+|the\s+|this\s+)?report(?:\s*card)?", t):
+        out["set_state"]["last_report"] = None
+        out["report"] = None
+        out["text"] = "I removed the report card. Your grades are unchanged; say `make a report card` to build it again."
     elif re.search(r"\b(undo|remove|delete)\b.*\blast grade\b", t):
         out["text"] = _undo_grade(user, actions)
     elif re.search(r"\b(delete|remove|clear)\b.*\b(all|every)\b.*\b(test|quiz|quizzes|recorded)\b.*\b(scores?|grades?|results?)\b", t):

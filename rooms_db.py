@@ -48,9 +48,9 @@ def _room_dict(r):
 
 
 def _own(c, actor: str, room_id: int):
-    """The room, only if `actor` is its teacher."""
-    r = c.execute("SELECT * FROM rooms WHERE id = ? AND teacher = ?", (int(room_id), actor)).fetchone()
-    if r is None or not may_teach(actor):
+    """The room, only if `actor` is its teacher (or the admin)."""
+    r = c.execute("SELECT * FROM rooms WHERE id = ?", (int(room_id),)).fetchone()
+    if r is None or not (auth.is_admin(actor) or (r[1] == actor and may_teach(actor))):
         raise PermissionError("You don't manage that classroom.")
     return _room_dict(r)
 
@@ -60,7 +60,7 @@ def _member(c, username: str, room_id: int):
     r = c.execute("SELECT * FROM rooms WHERE id = ?", (int(room_id),)).fetchone()
     if r is None:
         raise PermissionError("That classroom doesn't exist.")
-    if r[1] != username and not c.execute("SELECT 1 FROM enrollments WHERE room_id = ? AND student = ?",
+    if r[1] != username and not auth.is_admin(username) and not c.execute("SELECT 1 FROM enrollments WHERE room_id = ? AND student = ?",
                                           (int(room_id), username)).fetchone():
         raise PermissionError("You're not in that classroom.")
     return _room_dict(r)

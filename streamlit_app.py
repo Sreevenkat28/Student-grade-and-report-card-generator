@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 import assistant as ai
 import auth
 import classes_db as cdb
+import cleanup
 import exporter
 import files_db
 import helper
@@ -793,15 +794,23 @@ def settings_dialog():
                    "contents). The JSON choice also includes your grading rules and preferences.")
         exporter.download_ui(st, _my_data_doc(u), f"{u}_grades_data", "mydata")
         st.divider()
-        st.markdown("**🧹 Clear grades**")
-        st.caption("Removes the grade you typed for every class and all recorded test scores. Your classes stay.")
-        sure_g = st.checkbox("Yes, clear all my grades", key="s_sure_grades")
-        if st.button("Clear all my grades", disabled=not sure_g, width="stretch"):
-            for r in overview.class_table(u):
-                cdb.delete_final(u, r["name"])
-            for g in cdb.list_grades(u):
-                cdb.delete_grade(u, g["id"])
-            st.session_state["settings_flash"] = "All grades cleared."
+        st.markdown("**🗑 Delete things**")
+        st.caption("Pick what to remove. Your account stays (delete it under Account). This cannot be undone.")
+        labels = {"report": "Report card on screen", "chat": "Assistant chat history",
+                  **{k: cleanup.LABELS[k] for k in cleanup.choices(u)}}
+        picked = st.multiselect("What to delete", list(labels), format_func=labels.get, key="s_wipe",
+                                placeholder="Choose one or more")
+        sure_w = st.checkbox("Yes, delete these", key="s_sure_wipe")
+        if st.button("Delete selected", disabled=not (picked and sure_w), width="stretch", key="s_wipe_btn"):
+            cleanup.delete(u, picked)
+            if "report" in picked:
+                st.session_state.pop("last_report", None)
+            if "chat" in picked:
+                for k in ("ai_msgs", "ai_log", "ai_usage", "ai_state"):
+                    st.session_state.pop(k, None)
+            st.session_state.pop("s_wipe", None)
+            st.session_state.pop("s_sure_wipe", None)
+            st.session_state["settings_flash"] = "Deleted: " + ", ".join(labels[k].lower() for k in picked) + "."
             _reopen_settings(_ST_TABS[3])
 
 
@@ -936,6 +945,9 @@ def _render_report(student, res, mode):
               ("Date", student["date"])] + metrics + [("Remarks", remarks)],
         tables=[("Subjects", df)])
     exporter.download_ui(st, doc, f"report_card_{student['name'].strip()}", "report")
+    st.button("🗑 Delete report card", width="stretch", key="del_report",
+              on_click=lambda: st.session_state.pop("last_report", None),
+              help="Removes this report card. Your grades and classes stay, so you can generate it again.")
 
 
 with tab_report:

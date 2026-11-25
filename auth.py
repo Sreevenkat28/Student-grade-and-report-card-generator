@@ -438,6 +438,13 @@ def set_session_admin(username):
 
 
 # ---------------------------------------------------------------- activity log (read by the admin only)
+def clear_events(admin_user: str):
+    if not is_admin(admin_user):
+        raise PermissionError("Only the admin can do that.")
+    with _conn() as c:
+        c.execute("DROP TABLE IF EXISTS activity")
+
+
 def log_event(username: str, event: str):
     with _conn() as c:
         c.execute("CREATE TABLE IF NOT EXISTS activity (ts REAL NOT NULL, username TEXT NOT NULL, event TEXT NOT NULL)")
