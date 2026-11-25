@@ -92,7 +92,9 @@ def create_room(teacher: str, name: str):
             return False, "You already have a classroom with that name."
         cur = c.execute("INSERT INTO rooms (teacher, name, code, created) VALUES (?, ?, ?, ?)",
                         (teacher, name, _new_code(c), time.time()))
-        return True, cur.lastrowid
+        rid = cur.lastrowid
+    auth.log_event(teacher, f"created classroom {name}")
+    return True, rid
 
 
 def rooms_of_teacher(teacher: str):
@@ -127,8 +129,9 @@ def _delete_room(c, room_id: int):
 
 def delete_room(actor: str, room_id: int):
     with _conn() as c:
-        _own(c, actor, room_id)
+        room = _own(c, actor, room_id)
         _delete_room(c, int(room_id))
+    auth.log_event(actor, f"deleted classroom {room['name']}")
 
 
 def _remove(c, room_id: int, student: str):
@@ -192,6 +195,8 @@ def set_scores(actor: str, room_id: int, changes):
                 c.execute("DELETE FROM scores WHERE assignment_id = ? AND student = ?", (aid, student))
             else:
                 c.execute("INSERT OR REPLACE INTO scores VALUES (?, ?, ?)", (aid, student, float(marks)))
+    if changes:
+        auth.log_event(actor, f"saved {len(changes)} score(s)")
 
 
 def gradebook(actor: str, room_id: int):
@@ -302,12 +307,14 @@ def join(student: str, code: str):
         if c.execute("SELECT COUNT(*) FROM enrollments WHERE room_id = ?", (room["id"],)).fetchone()[0] >= MAX_STUDENTS:
             return False, "This classroom is full."
         c.execute("INSERT INTO enrollments VALUES (?, ?, ?)", (room["id"], student, time.time()))
+    auth.log_event(student, f"joined classroom {room['name']} (teacher {room['teacher']})")
     return True, room["name"]
 
 
 def leave(student: str, room_id: int):
     with _conn() as c:
         _remove(c, int(room_id), student)
+    auth.log_event(student, "left a classroom")
 
 
 def rooms_of_student(student: str):

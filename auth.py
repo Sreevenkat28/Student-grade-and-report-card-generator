@@ -349,6 +349,8 @@ def change_email(username: str, password: str, new_email: str):
     bad = emailcheck.problem(new_email)
     if bad:
         return False, bad
+    if RESERVED_EMAIL and new_email == RESERVED_EMAIL:
+        return False, "That email address can't be used."
     try:
         with _conn() as c:
             c.execute("UPDATE members SET email = ? WHERE username = ?", (new_email, u))
@@ -373,6 +375,8 @@ def is_admin(username: str) -> bool:
     The file is git-ignored, so it never exists on the deployed (Streamlit Cloud) copy:
     admin access is possible only on the device where the file was created.
     """
+    if username and _session_admin.get() == username.strip().lower():
+        return True
     try:
         with open(ADMIN_FILE) as f:
             return bool(username) and f.read().strip().lower() == username.strip().lower()
@@ -407,3 +411,40 @@ def delete_all_members(keep: str = ""):
     for u in names:
         delete_member(u)
     return len(names)
+
+
+# ---------------------------------------------------------------- online owner (admin on the deployed site)
+# A website cannot identify a particular computer, so online admin needs BOTH the owner's email account and a long
+# secret key that the owner keeps. The app sets the two values below from Streamlit Secrets.
+import contextvars
+
+RESERVED_EMAIL = ""                 # the owner's address; nobody can switch another account to it
+MIN_ADMIN_KEY = 20
+_session_admin = contextvars.ContextVar("session_admin", default=None)
+
+
+def set_session_admin(username):
+    """Called at the start of every run: the account that has unlocked admin in THIS browser session, or None."""
+    _session_admin.set(username.strip().lower() if username else None)
+
+
+def check_owner_key(username: str, typed_key: str, owner_email: str, owner_key: str) -> bool:
+    if not owner_email or not owner_key or len(owner_key) < MIN_ADMIN_KEY:
+        return False
+    if (get_email(username) or "").lower() != owner_email.strip().lower():
+        return False
+    return hmac.compare_digest(str(typed_key or "").strip().encode(), owner_key.strip().encode())
+
+
+# ---------------------------------------------------------------- activity log (read by the admin only)
+def log_event(username: str, event: str):
+    with _conn() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS activity (ts REAL NOT NULL, username TEXT NOT NULL, event TEXT NOT NULL)")
+        c.execute("INSERT INTO activity VALUES (?, ?, ?)", (time.time(), username, str(event)[:200]))
+        c.execute("DELETE FROM activity WHERE rowid <= (SELECT MAX(rowid) FROM activity) - 1000")
+
+
+def recent_events(limit: int = 100):
+    with _conn() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS activity (ts REAL NOT NULL, username TEXT NOT NULL, event TEXT NOT NULL)")
+        return c.execute("SELECT ts, username, event FROM activity ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()

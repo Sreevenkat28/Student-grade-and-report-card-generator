@@ -274,7 +274,7 @@ def admin_tab(admin_user, viewing_user, view_as):
     if not auth.is_admin(admin_user):
         return
     st.markdown("#### 🛠 Admin")
-    st.caption("Only on this device. You can see every account and classroom here, change roles, and open the app as anyone.")
+    st.caption("Only you can see this. Every account and classroom, recent activity, role changes, and opening the app as anyone.")
     accounts = auth.list_accounts()
     st.dataframe(pd.DataFrame([{"Username": a["username"], "Email": a["email"],
                                 "Role": "admin (you)" if a["username"] == admin_user else a["role"]} for a in accounts]),
@@ -299,6 +299,14 @@ def admin_tab(admin_user, viewing_user, view_as):
                 st.rerun()
         elif not others:
             st.caption("No other accounts yet. Sign up a test student and a test teacher to try the roles.")
+    with st.container(border=True, key="card_admin_activity"):
+        st.markdown("##### Recent activity")
+        events = auth.recent_events(100)
+        if events:
+            st.dataframe(pd.DataFrame([{"When": datetime.fromtimestamp(t).strftime("%d %b %H:%M"), "Account": u, "What": e}
+                                       for t, u, e in events]), width="stretch", hide_index=True)
+        else:
+            st.caption("Nothing yet.")
     with st.container(border=True, key="card_admin_rooms"):
         st.markdown("##### All classrooms")
         rooms = rooms_db.all_rooms()

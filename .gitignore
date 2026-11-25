@@ -4,3 +4,4 @@ __pycache__/
 users.db
 .streamlit/secrets.toml
 .admin_device
+.streamlit/owner_secrets.txt
