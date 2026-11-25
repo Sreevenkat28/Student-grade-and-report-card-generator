@@ -14,6 +14,7 @@ import gpa as gpa_lib
 import grading
 import overview
 import prefs_db
+import rooms_db
 
 DEFAULT_MODEL = "claude-opus-5-5"
 MAX_STEPS = 10            # model <-> tool round trips per user message
@@ -189,6 +190,9 @@ def _set_class_grade(user, a, _ctx):
     names = {l["level"].lower(): l["level"] for l in lv}
     if level and str(level).lower() not in names:
         raise ValueError("Unknown level. Your levels: " + ", ".join(l["level"] for l in lv))
+    locked = rooms_db.teacher_grades(user).get(name.lower())
+    if locked and locked["percent"] is not None:
+        raise ValueError(f"Your teacher ({locked['teacher']}) sets the grade for {locked['name']}, so it can't be changed here.")
     cur = cdb.get_finals(user).get(name.lower())
     ok, msg = cdb.set_final(user, name, percent, letter, a.get("credits") or (cur["credits"] if cur else 1.0),
                             names[str(level).lower()] if level else (cur["level"] if cur else None))

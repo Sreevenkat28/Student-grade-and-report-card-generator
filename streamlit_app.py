@@ -19,6 +19,7 @@ import overview
 import gpa as gpa_lib
 import grading
 import prefs_db
+import roles_ui
 
 DEFAULT_SUBJECTS = ["Mathematics", "Science", "English", "Social Studies", "Computer Science"]
 
@@ -259,7 +260,8 @@ def _clear_user_state():
     """Forget everything tied to the signed-in user (called on log out / account deletion)."""
     for k in list(st.session_state.keys()):
         if k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "ai_mode", "ai_state",
-                 "ai_stream", "ai_pending", "goto", "_pending_state", "theme_mode", "open_settings", "settings_tab", "settings_flash") or k.startswith("ui_"):
+                 "ai_stream", "ai_pending", "goto", "_pending_state", "theme_mode", "open_settings", "settings_tab", "settings_flash",
+                 "admin_real", "view_role", "room_pick") or k.startswith(("ui_", "adm_")):
             st.session_state.pop(k, None)
 
 
@@ -397,6 +399,13 @@ def _reset_screen(pending):
                     st.rerun()
 
 
+def _teacher_code():
+    try:
+        return str(st.secrets.get("teacher_code", "") or "")
+    except Exception:
+        return ""
+
+
 def _signup_screen(pending):
     """Sign up, step 2: confirm the emailed code, then the account is created and you're logged in."""
     st.markdown('<p class="sub">Confirm your email to finish signing up</p>', unsafe_allow_html=True)
@@ -416,7 +425,7 @@ def _signup_screen(pending):
                     _clear_pending()
                     st.session_state["flash_error"] = msg2
                     st.rerun()
-                auth.create_member(email_n, uname_n, pending["password"])
+                auth.create_member(email_n, uname_n, pending["password"], pending.get("role", "student"))
                 st.session_state["user"] = uname_n
                 _clear_pending()
                 st.rerun()
@@ -438,10 +447,14 @@ def login_screen():
     if st.session_state.get("flash_error"):
         st.error(st.session_state.pop("flash_error"))
 
-    st.markdown('<p class="sub">Sign up with a code we email you, or log in</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub">Students and teachers: sign up with a code we email you, or log in</p>', unsafe_allow_html=True)
     tab_signup, tab_login = st.tabs(["✨ Sign up", "🔑 Log in"])
     with tab_signup:
         with st.form("signup"):
+            role = st.radio("I am a", ["Student", "Teacher"], horizontal=True, key="su_role",
+                            help="Students track their grades and join classrooms. Teachers get the same tools plus classrooms and a gradebook.")
+            tcode = st.text_input("Teacher code (teachers only)", type="password",
+                                  help="Ask the app owner for this code.") if _teacher_code() else ""
             email = st.text_input("Email", help="We send your confirmation code here, so use a real address you can open.")
             uname = st.text_input("Username", help="A short nickname: 3-30 letters, numbers, _ . or -. You can log in with it instead of your email.")
             pw = st.text_input("Password", type="password", key="su_pw", help="Any length, any characters. Keep it private.")
@@ -449,10 +462,12 @@ def login_screen():
             if st.form_submit_button("Send me a confirmation code", type="primary", width="stretch"):
                 ok, msg, email_n, uname_n = auth.check_signup(email, uname)
                 err = msg if not ok else (auth.check_password(pw) or ("Passwords do not match." if pw != pw2 else ""))
+                if not err and role == "Teacher" and _teacher_code() and tcode != _teacher_code():
+                    err = "That teacher code isn't right."
                 if err:
                     st.error(err)
                 else:
-                    _start_pending({"purpose": "signup", "email": email_n, "username": uname_n,
+                    _start_pending({"purpose": "signup", "email": email_n, "username": uname_n, "role": role.lower(),
                                     "password": pw})
     with tab_login:
         with st.form("login"):
@@ -485,6 +500,37 @@ user = st.session_state["user"]
 for _k, _v in st.session_state.pop("_pending_state", {}).items():
     st.session_state[_k] = _v
 _saved_ui = prefs_db.load_ui(user)
+
+# Roles. "Admin" exists only on the owner's own device (see auth.is_admin); it is re-checked on every run.
+_admin_real = st.session_state.get("admin_real")
+if _admin_real and not auth.is_admin(_admin_real):
+    st.session_state.pop("admin_real", None)
+    _admin_real = None
+OWNER = _admin_real or (user if auth.is_admin(user) else None)
+VIEWING_OTHER = bool(OWNER) and OWNER != user
+if OWNER and not VIEWING_OTHER:
+    VIEW = st.session_state.get("view_role", "Admin")      # the owner can preview each role
+else:
+    VIEW = auth.get_role(user).capitalize()
+IS_ADMIN = VIEW == "Admin"
+SHOW_TEACHING = VIEW in ("Admin", "Teacher")
+SHOW_CLASSROOMS = VIEW in ("Admin", "Student")
+
+
+def _switch_user(target):
+    """Admin only: show the app as `target` (or return to the admin's own account)."""
+    owner = OWNER
+    if not owner:
+        return
+    _clear_user_state()
+    st.session_state["user"] = target
+    if target != owner:
+        st.session_state["admin_real"] = owner
+    st.rerun()
+
+
+if auth.get_role(user) == "teacher" and not cdb.is_onboarded(user):
+    cdb.mark_onboarded(user)   # the "your classes" questions are for students; teachers create classrooms instead
 
 # --------------------------------------------------------------------------- onboarding
 if not cdb.is_onboarded(user):
@@ -524,7 +570,7 @@ head_l, _head_gap, head_theme = st.columns([2, 3, 1], vertical_alignment="center
 with head_l.popover(f"👤 {user}", width="stretch"):
     _email = auth.get_email(user) or "—"
     _cls, _sum, (_nfiles, _used) = cdb.list_classes(user), overview.summary(user), files_db.usage(user)
-    _badge = '<span class="badge">ADMIN</span>' if auth.is_admin(user) else ""
+    _badge = f'<span class="badge">{"ADMIN" if OWNER and not VIEWING_OTHER else auth.get_role(user).upper()}</span>'
     _gpa_txt = "—" if _sum["gpa"] is None else "%.2f" % _sum["gpa"]
     st.markdown(f'<div class="prof"><div class="avatar">{html.escape(user[:1].upper())}</div>'
                 f'<div><b>{html.escape(user)}</b>{_badge}<br><span>{html.escape(_email)}</span></div></div>'
@@ -545,6 +591,14 @@ with head_l.popover(f"👤 {user}", width="stretch"):
 _is_dark = st.session_state.get("theme_mode") == "Dark"
 head_theme.button("☀️" if _is_dark else "🌙", key="theme_quick", on_click=_toggle_theme, width="stretch",
                   help="Switch to light mode" if _is_dark else "Switch to dark mode")
+
+if VIEWING_OTHER:
+    st.warning(f"👀 Admin view: you are seeing the app as **{user}** ({auth.get_role(user)}). Changes you make here are real.")
+    if st.button("↩ Back to my admin account", width="stretch", key="back_to_admin"):
+        _switch_user(OWNER)
+elif OWNER:
+    st.radio("View the app as", ["Admin", "Teacher", "Student"], horizontal=True, key="view_role",
+             help="Admin sees everything. Teacher and Student show exactly the tabs those roles get, using your own account.")
 
 st.title("🎓 Grade & Report Card Generator")
 st.markdown('<p class="sub">Enter marks to get the percentage, grade and pass/fail result</p>',
@@ -714,14 +768,16 @@ def settings_dialog():
             _reopen_settings(_ST_TABS[3])
 
 
-IS_ADMIN = auth.is_admin(user)
 TAB_NAMES = ["✏️ My grades", "📝 Report card", "🎯 GPA", "⚙️ Grading rules", "📚 My classes", "📁 Files", "🤖 Assistant"]
+if SHOW_TEACHING:
+    TAB_NAMES.append("🏫 Teaching")
+if SHOW_CLASSROOMS:
+    TAB_NAMES.append("🎒 Classrooms")
 if IS_ADMIN:
     TAB_NAMES.append("🛠 Admin")
 _tabs = st.tabs(TAB_NAMES)
 tab_grades, tab_report, tab_gpa, tab_rules, tab_classes, tab_files, tab_ai = _tabs[:7]
-if IS_ADMIN:
-    tab_admin = _tabs[7]
+TAB_BY_NAME = dict(zip(TAB_NAMES, _tabs))
 scale, rules = prefs_db.load(user)
 gpa_scale, gpa_levels = prefs_db.load_gpa(user)
 my = cdb.list_classes(user)
@@ -753,9 +809,14 @@ with tab_grades:
                 })
             _save_g = st.form_submit_button("Save grades", type="primary", width="stretch",
                                             help="Updates every tab at once.")
+        _locked = {r["name"] for r in CT if r["source"] == "teacher"}
+        if _locked:
+            st.caption("🔒 Set by your teacher (editing these here has no effect): " + ", ".join(sorted(_locked)) + ".")
         if _save_g:
             _errs, _plan = [], []
             for rec in _edited.to_dict("records"):
+                if rec["Class"] in _locked:
+                    continue
                 _p, _l, _e = overview.parse_grade(rec["Grade"], gpa_scale)
                 if _e:
                     _errs.append(f"**{rec['Class']}**: {_e}")
@@ -785,7 +846,7 @@ with tab_grades:
             "Percent": "—" if r["percent"] is None else f"{r['percent']:g}%",
             "GPA letter": r["gpa_letter"] or "—",
             "Report card grade": "—" if r["percent"] is None else (r["entered_letter"] or grading.grade_for(scale, r["percent"])[0]),
-            "From": {"entered": "your grade", "tests": "test average"}.get(r["source"], "—"),
+            "From": {"entered": "your grade", "tests": "test average", "teacher": "🔒 your teacher"}.get(r["source"], "—"),
         } for r in CT]), width="stretch", hide_index=True)
         st.caption("A letter is turned into a percentage with your GPA scale (the lowest % that earns it), and a percentage "
                    "into a letter the same way. If a class has no grade here, the average of its recorded test scores is used.")
@@ -1274,30 +1335,16 @@ with tab_rules:
         st.rerun()
 
 
-# ---- Admin tab (only on the admin's own device)
+# ---- Role tabs (their screens live in roles_ui.py)
+if SHOW_TEACHING:
+    with TAB_BY_NAME["🏫 Teaching"]:
+        roles_ui.teaching_tab(user)
+if SHOW_CLASSROOMS:
+    with TAB_BY_NAME["🎒 Classrooms"]:
+        roles_ui.classrooms_tab(user)
 if IS_ADMIN:
-    with tab_admin:
-        members = auth.list_members()
-        st.markdown(f"#### Accounts ({len(members)})")
-        st.dataframe(pd.DataFrame(members, columns=["Username", "Email"]),
-                     width="stretch", hide_index=True)
-        others = [u for (u, _e) in members if u != user]
-        with st.container(border=True, key="card_6"):
-            st.markdown("##### Delete one account")
-            target = st.selectbox("Account", others, index=None, placeholder="Choose an account")
-            if st.button("Delete this account", disabled=target is None):
-                auth.delete_member(target)
-                st.rerun()
-        with st.container(border=True, key="card_7"):
-            st.markdown("##### Delete ALL other accounts")
-            st.caption("Removes every account and its classes except yours. This cannot be undone.")
-            confirm = st.text_input("Type DELETE to confirm", key="wipe_confirm")
-            if st.button("Delete all other accounts", type="primary",
-                         disabled=confirm != "DELETE" or not others):
-                n = auth.delete_all_members(keep=user)
-                st.session_state.pop("wipe_confirm", None)
-                st.toast(f"Deleted {n} account(s).")
-                st.rerun()
+    with TAB_BY_NAME["🛠 Admin"]:
+        roles_ui.admin_tab(OWNER, user, _switch_user)
 
 
 # ---- Settings window (opened from the profile menu or by the assistant)

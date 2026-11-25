@@ -34,6 +34,8 @@ def _conn():
         "username TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE)"
     )
     cols = {r[1] for r in conn.execute("PRAGMA table_info(members)")}
+    if "role" not in cols:  # accounts made before roles existed are students
+        conn.execute("ALTER TABLE members ADD COLUMN role TEXT NOT NULL DEFAULT 'student'")
     for col in ("salt", "hash"):  # older databases had no password columns
         if col not in cols:
             conn.execute(f"ALTER TABLE members ADD COLUMN {col} BLOB")
@@ -76,13 +78,43 @@ def check_signup(email: str, username: str):
     return True, "", email, username
 
 
-def create_member(email: str, username: str, password: str):
+ROLES = ("student", "teacher")  # "admin" is not stored: it exists only on the owner's device (see is_admin)
+
+
+def create_member(email: str, username: str, password: str, role: str = "student"):
+    if role not in ROLES:
+        raise ValueError("Unknown role")
     salt = os.urandom(16)
     with _conn() as c:
         c.execute(
-            "INSERT INTO members (username, email, salt, hash) VALUES (?, ?, ?, ?)",
-            (username, email, salt, _hash_pw(password, salt)),
+            "INSERT INTO members (username, email, salt, hash, role) VALUES (?, ?, ?, ?, ?)",
+            (username, email, salt, _hash_pw(password, salt), role),
         )
+
+
+def get_role(username: str) -> str:
+    with _conn() as c:
+        row = c.execute("SELECT role FROM members WHERE username = ?", (username,)).fetchone()
+    return row[0] if row and row[0] in ROLES else "student"
+
+
+def set_role(admin_user: str, username: str, role: str):
+    """Only the device admin can change someone's role."""
+    if not is_admin(admin_user):
+        raise PermissionError("Admin only.")
+    if role not in ROLES:
+        raise ValueError("Unknown role")
+    with _conn() as c:
+        c.execute("UPDATE members SET role = ? WHERE username = ?", (role, username))
+    if role != "teacher":
+        import rooms_db
+        rooms_db.delete_teaching(username)
+
+
+def list_accounts():
+    with _conn() as c:
+        return [{"username": r[0], "email": r[1], "role": r[2]}
+                for r in c.execute("SELECT username, email, role FROM members ORDER BY username")]
 
 
 def set_password(email: str, password: str):
@@ -355,6 +387,8 @@ def list_members():
 
 def delete_member(username: str):
     """Remove an account and everything tied to it."""
+    import rooms_db  # imported here because rooms_db imports this module
+    rooms_db.delete_user_data(username)
     with _conn() as c:
         row = c.execute("SELECT email FROM members WHERE username = ?", (username,)).fetchone()
         c.execute("DELETE FROM members WHERE username = ?", (username,))

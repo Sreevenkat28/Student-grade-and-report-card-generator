@@ -10,6 +10,7 @@ import re
 import classes_db as cdb
 import gpa as gpa_lib
 import prefs_db
+import rooms_db
 
 NUM_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(?:%|percent)?$", re.I)
 
@@ -53,12 +54,19 @@ def class_table(user):
     tests = _test_averages(user)
     default_level = lv[0]["level"]
     level_names = {l["level"] for l in lv}
+    rooms = rooms_db.teacher_grades(user)
+    listed = {n.lower() for n in my["current"] + my["previous"]}
+    # a joined classroom always shows up, even if the student removed or renamed it in their own list
+    my = {"current": my["current"] + [v["name"] for k, v in rooms.items() if k not in listed], "previous": my["previous"]}
     rows = []
     for status in ("current", "previous"):
         for name in my[status]:
             f, t = finals.get(name.lower()), tests.get(name.lower())
+            room = rooms.get(name.lower())
             percent, letter, source, n = None, None, None, 0
-            if f and (f["percent"] is not None or f["letter"]):
+            if room and room["percent"] is not None:  # the teacher's grade wins and the student can't change it
+                percent, source, n = room["percent"], "teacher", 1
+            elif f and (f["percent"] is not None or f["letter"]):
                 source, n = "entered", 1
                 if f["percent"] is not None:
                     percent = float(f["percent"])
@@ -70,7 +78,8 @@ def class_table(user):
             gpa_letter = letter or (gpa_lib.percent_to_letter(percent, gs) if percent is not None else None)
             level = f["level"] if f and f["level"] in level_names else default_level
             rows.append({"name": name, "status": status, "percent": percent, "entered_letter": letter,
-                         "entered_text": (letter if letter else (f"{percent:g}%" if source == "entered" else "")),
+                         "entered_text": (letter if letter else (f"{percent:g}%" if source in ("entered", "teacher") else "")),
+                         "teacher": room["teacher"] if room else None,
                          "gpa_letter": gpa_letter, "credits": float(f["credits"]) if f else 1.0, "level": level,
                          "source": source, "n": n})
     return rows

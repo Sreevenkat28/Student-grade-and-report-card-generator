@@ -12,8 +12,18 @@ Student Grade & Report Card Generator. Enter subject marks and get the percentag
 Pass rule: at least 40% in every subject and overall.
 Grades: A+ ≥90 · A ≥80 · B+ ≥70 · B ≥60 · C ≥50 · D ≥40 · F <40
 
-## Admin (this device only)
-Run `python3 make_admin.py` on your own computer to make an account the admin. It writes a git-ignored `.admin_device` file; with `streamlit run streamlit_app.py` that account then gets an **Admin** tab (list accounts, delete one, delete all others). The deployed app never has this file, so nobody online can be an admin.
+## Roles
+Everyone uses the same login screen; the account decides the role.
+
+| Role | How you get it | What it can do |
+|---|---|---|
+| **Student** | choose *Student* at sign-up | All the grade, report card, GPA, file and assistant tools, plus **Classrooms**: join with a teacher's code, see your scores, announcements and materials. |
+| **Teacher** | choose *Teacher* at sign-up | Everything a student has, plus **Teaching**: create classrooms with join codes, gradebook, class statistics, student reports, announcements, shared materials, pass mark, close or delete a classroom, remove students. |
+| **Admin** | only on the owner's own computer (`.admin_device` file) | Preview the Teacher or Student view, open the app as any account, change roles, delete accounts and classrooms. |
+
+A teacher only sees students who join with their code. Grades a teacher enters flow into the student's tabs and the student can't change them. To restrict who can register as a teacher, set `teacher_code` in Secrets.
+
+**Using admin:** on your Mac, double-click `run_admin.command` (or `bash run_admin.command`). The first run installs what's needed and creates your admin account; the app then opens at http://localhost:8501. It only listens on your computer. Its accounts are separate from the online app's.
 
 ## Study assistant
 The Assistant tab is a chat-style command assistant that works for everyone with no API key and no cost. It does what you ask in plain words and tells you what it changed. It can:
@@ -33,7 +43,7 @@ Most labels have a small **?** icon, and the table column headings explain thems
 Switch with the 🌙 / ☀️ button next to your name, or choose Light / Dark / Auto (follows your device) in Settings → Appearance, or tell the assistant `dark mode`. The choice is saved to your account.
 
 ## Tests
-`python tests/test_tabs.py` checks that every tab renders, and `python tests/test_assistant.py` checks the assistant's commands, multi-request messages, confirmations and undo (both use a throwaway database).
+`python tests/test_roles.py` checks role permissions and screens, `python tests/test_tabs.py` checks that every tab renders, and `python tests/test_assistant.py` checks the assistant's commands, multi-request messages, confirmations and undo (both use a throwaway database).
 
 ## Look and animations
 The interface uses an Apple-style design: SF system font, large rounded corners, frosted-glass panels and macOS-style segmented tabs.

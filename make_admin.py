@@ -32,7 +32,7 @@ def main():
         username = member[0]
     with open(auth.ADMIN_FILE, "w") as f:
         f.write(username)
-    print(f"'{username}' is now the admin on this device. Run: streamlit run streamlit_app.py")
+    print(f"'{username}' is now the admin on this device. Admin can preview the Teacher and Student views and manage every account.")
 
 
 if __name__ == "__main__":
