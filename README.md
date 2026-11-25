@@ -19,9 +19,9 @@ Everyone uses the same login screen; the account decides the role.
 |---|---|---|
 | **Student** | choose *Student* at sign-up | All the grade, report card, GPA, file and assistant tools, plus **Classrooms**: join with a teacher's code, see your scores, announcements and materials. |
 | **Teacher** | choose *Teacher* at sign-up | Everything a student has, plus **Teaching**: create classrooms with join codes, gradebook, class statistics, student reports, announcements, shared materials, pass mark, close or delete a classroom, remove students. |
-| **Admin** | the owner: on their own computer (`.admin_device` file), or online with the owner email + secret key | Preview the Teacher or Student view, open the app as any account, change roles, delete accounts and classrooms. |
+| **Admin** | the owner: the account with the owner's email (or, on their own computer, the `.admin_device` file) | Preview the Teacher or Student view, open the app as any account, change roles, delete accounts and classrooms. |
 
-**Online admin (the deployed app):** run `python3 make_owner_key.py you@example.com` on your computer, paste the two lines from `.streamlit/owner_secrets.txt` into Streamlit Secrets (above any `[section]`), sign up on the site with that email, then click your name and enter the key under **Owner key**. Admin needs both the email account and the key, once per browser session; nobody else sees any sign of it, and the owner's address can't be claimed by changing another account's email.
+**Online admin (the deployed app):** the account registered with the owner's email is admin automatically. Creating it needs the code sent to that inbox, and nobody else can switch their account to that address. Use a strong password: it is the only other protection. (To use a different owner, set `admin_email` in Secrets.)
 
 A teacher only sees students who join with their code. Grades a teacher enters flow into the student's tabs and the student can't change them. To restrict who can register as a teacher, set `teacher_code` in Secrets.
 

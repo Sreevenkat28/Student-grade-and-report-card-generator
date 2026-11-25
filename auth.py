@@ -349,7 +349,7 @@ def change_email(username: str, password: str, new_email: str):
     bad = emailcheck.problem(new_email)
     if bad:
         return False, bad
-    if RESERVED_EMAIL and new_email == RESERVED_EMAIL:
+    if is_owner_email(new_email):
         return False, "That email address can't be used."
     try:
         with _conn() as c:
@@ -414,26 +414,27 @@ def delete_all_members(keep: str = ""):
 
 
 # ---------------------------------------------------------------- online owner (admin on the deployed site)
-# A website cannot identify a particular computer, so online admin needs BOTH the owner's email account and a long
-# secret key that the owner keeps. The app sets the two values below from Streamlit Secrets.
+# The one account registered with the owner's email is admin. Signing up needs the code sent to that inbox, and an
+# email can only belong to one account. The address is kept as a SHA-256 fingerprint so it isn't readable in the code.
 import contextvars
 
-RESERVED_EMAIL = ""                 # the owner's address; nobody can switch another account to it
-MIN_ADMIN_KEY = 20
+OWNER_EMAIL_SHA256 = "974c86b22cb91cc2ec8ce4728925095e3c23c3f4c2893af5d4904d44058d1545"
+OWNER_OVERRIDE = ""        # optional `admin_email` from Secrets replaces the built-in owner
 _session_admin = contextvars.ContextVar("session_admin", default=None)
 
 
+def is_owner_email(email) -> bool:
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    if OWNER_OVERRIDE:
+        return email == OWNER_OVERRIDE
+    return hashlib.sha256(email.encode()).hexdigest() == OWNER_EMAIL_SHA256
+
+
 def set_session_admin(username):
-    """Called at the start of every run: the account that has unlocked admin in THIS browser session, or None."""
+    """Called at the start of every run: the signed-in owner account for THIS browser session, or None."""
     _session_admin.set(username.strip().lower() if username else None)
-
-
-def check_owner_key(username: str, typed_key: str, owner_email: str, owner_key: str) -> bool:
-    if not owner_email or not owner_key or len(owner_key) < MIN_ADMIN_KEY:
-        return False
-    if (get_email(username) or "").lower() != owner_email.strip().lower():
-        return False
-    return hmac.compare_digest(str(typed_key or "").strip().encode(), owner_key.strip().encode())
 
 
 # ---------------------------------------------------------------- activity log (read by the admin only)

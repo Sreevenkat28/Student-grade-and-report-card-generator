@@ -140,8 +140,7 @@ def test_admin_can_preview_roles_and_view_as_others():
     os.remove(auth.ADMIN_FILE)
 
 
-KEY = "k" * 10 + "Z9" * 10
-OWNER_SECRETS = {"admin_email": "owner@gmail.com", "admin_key": KEY}
+OWNER_SECRETS = {"admin_email": "owner@gmail.com"}      # stands in for the built-in owner address
 
 
 def _online(user, secrets=OWNER_SECRETS, **state):
@@ -161,47 +160,31 @@ def _has_admin(at):
     return "🛠 Admin" in [t.label for t in at.tabs]
 
 
-def _key_boxes(at):
-    return [t for t in at.text_input if t.label == "Owner key"]
-
-
-def _unlock(at, key):
-    _key_boxes(at)[0].set_value(key)
-    [b for b in at.button if b.label == "🔐 Unlock"][0].click().run()
-    return at
-
-
-def test_online_owner_needs_the_owner_email_and_the_secret_key():
+def test_online_only_the_owner_email_account_is_admin():
     assert not os.path.exists(auth.ADMIN_FILE)          # online: no device file
+    at = _online("owner")
+    assert _has_admin(at) and any(r.key == "view_role" for r in at.radio)
     for other in ("sam", "sue", "tom"):
         at = _online(other)
-        assert not _has_admin(at) and not _key_boxes(at), "others must see nothing about admin"
-    at = _online("owner")
-    assert not _has_admin(at) and _key_boxes(at), "the owner is offered the key box but is not admin yet"
-    assert not _has_admin(_unlock(at, "x" * 40))
-    at = _online("owner")
-    _unlock(at, KEY)
-    assert _has_admin(at) and any(r.key == "view_role" for r in at.radio)
-    assert not _has_admin(_online("owner")), "another browser session of the same account is not admin without the key"
-    assert not _has_admin(_online("sam", admin_unlocked="sam")), "a forged unlock flag on another account does nothing"
-    assert not _has_admin(_online("sam", admin_real="owner")), "viewing-as needs the unlock too"
-    assert _has_admin(_online("owner", admin_unlocked="owner"))
+        assert not _has_admin(at) and not any(r.key == "view_role" for r in at.radio)
+        assert not any("admin" in m.value.lower() and "badge" in m.value and "ADMIN" in m.value for m in at.markdown)
+    assert not _has_admin(_online("sam", admin_real="tom")), "a forged view-as flag does nothing"
+    viewing = _online("sam", admin_real="owner")
+    assert any("Admin view" in w.value for w in viewing.warning)
 
 
-def test_online_owner_is_not_offered_without_both_secrets():
-    for secrets in ({}, {"admin_email": "owner@gmail.com"}, {"admin_email": "owner@gmail.com", "admin_key": "short"}):
-        at = _online("owner", secrets)
-        assert not _has_admin(at)
-        if _key_boxes(at):
-            assert not _has_admin(_unlock(at, secrets.get("admin_key", "")))
+def test_built_in_owner_is_matched_by_fingerprint_only():
+    auth.OWNER_OVERRIDE = ""
+    assert not auth.is_owner_email("owner@gmail.com") and not auth.is_owner_email("") and not auth.is_owner_email(None)
+    assert len(auth.OWNER_EMAIL_SHA256) == 64
+    assert not _has_admin(_online("owner", {})), "without the override, a test address is not the owner"
 
 
 def test_nobody_can_take_the_owner_email():
-    _online("sam")                                       # the app registers the reserved address
+    auth.OWNER_OVERRIDE = "owner@gmail.com"
     ok, _msg = auth.change_email("sam", "pw", "owner@gmail.com")
     assert not ok
-    auth.RESERVED_EMAIL = "free.owner@gmail.com"
-    at = _online(None, {"admin_email": "free.owner@gmail.com", "admin_key": KEY, "dev_show_code": True})
+    at = _online(None, {"admin_email": "free.owner@gmail.com", "dev_show_code": True})
     box = lambda label: [t for t in at.text_input if t.label == label][0]
     box("Email").set_value("free.owner@gmail.com")
     box("Username").set_value("squatter")
@@ -211,7 +194,7 @@ def test_nobody_can_take_the_owner_email():
     assert "dev_code" not in at.session_state, "test mode must never reveal the code for the owner's address"
     assert any("real email" in e.value for e in at.error)
     assert auth.find_member("squatter") is None
-    auth.RESERVED_EMAIL = ""
+    auth.OWNER_OVERRIDE = ""
 
 
 def test_deleting_accounts_cleans_up_classrooms():

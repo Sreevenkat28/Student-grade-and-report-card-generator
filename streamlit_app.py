@@ -261,7 +261,7 @@ def _clear_user_state():
     for k in list(st.session_state.keys()):
         if k in ("user", "last_report", "display_mode", "ai_msgs", "ai_log", "ai_usage", "ai_mode", "ai_state",
                  "ai_stream", "ai_pending", "goto", "_pending_state", "theme_mode", "open_settings", "settings_tab", "settings_flash",
-                 "admin_real", "view_role", "room_pick", "admin_unlocked") or k.startswith(("ui_", "adm_")):
+                 "admin_real", "view_role", "room_pick") or k.startswith(("ui_", "adm_")):
             st.session_state.pop(k, None)
 
 
@@ -327,7 +327,7 @@ def _deliver(send_fn, *args):
 
 def _send(email, code):
     """Deliver a reset code. Returns an error string or None."""
-    if _dev_mode() and auth.RESERVED_EMAIL and email == auth.RESERVED_EMAIL:
+    if _dev_mode() and auth.is_owner_email(email):   # the owner's code must go to the real inbox
         return "This address needs real email delivery. Set up email in Secrets and remove dev_show_code."
     if _dev_mode():
         st.session_state["dev_code"] = code
@@ -401,16 +401,14 @@ def _reset_screen(pending):
                     st.rerun()
 
 
-def _owner_settings():
-    """(owner_email, owner_key) from Secrets, or ("", "") when online admin isn't set up."""
+def _owner_override():
     try:
-        return (str(st.secrets.get("admin_email", "") or "").strip().lower(),
-                str(st.secrets.get("admin_key", "") or "").strip())
+        return str(st.secrets.get("admin_email", "") or "").strip().lower()
     except Exception:
-        return "", ""
+        return ""
 
 
-auth.RESERVED_EMAIL = _owner_settings()[0]
+auth.OWNER_OVERRIDE = _owner_override()
 auth.set_session_admin(None)   # nobody is admin until this run proves it
 
 
@@ -519,12 +517,10 @@ for _k, _v in st.session_state.pop("_pending_state", {}).items():
     st.session_state[_k] = _v
 _saved_ui = prefs_db.load_ui(user)
 
-# Roles. "Admin" is the owner: on their own computer (device file), or online after unlocking with email + secret key.
+# Roles. "Admin" is the owner: the account with the owner's email, or (on their own computer) the device file.
 # It is re-checked on every run.
 _real = st.session_state.get("admin_real") or user
-_owner_email, _owner_key = _owner_settings()
-OWNER_ACCOUNT = bool(_owner_email and _owner_key) and (auth.get_email(_real) or "").lower() == _owner_email
-if OWNER_ACCOUNT and st.session_state.get("admin_unlocked") == _real:
+if auth.is_owner_email(auth.get_email(_real)):
     auth.set_session_admin(_real)
 _admin_real = st.session_state.get("admin_real")
 if _admin_real and not auth.is_admin(_admin_real):
@@ -546,10 +542,7 @@ def _switch_user(target):
     owner = OWNER
     if not owner:
         return
-    unlocked = st.session_state.get("admin_unlocked")
     _clear_user_state()
-    if unlocked:
-        st.session_state["admin_unlocked"] = unlocked
     st.session_state["user"] = target
     if target != owner:
         st.session_state["admin_real"] = owner
@@ -608,18 +601,6 @@ with head_l.popover(f"👤 {user}", width="stretch"):
     if _cls["previous"]:
         st.caption(f"{len(_cls['previous'])} previous class(es)")
     st.divider()
-    if OWNER_ACCOUNT and not OWNER:   # only the owner's account is ever offered this
-        with st.form("owner_unlock", clear_on_submit=True):
-            _typed = st.text_input("Owner key", type="password", help="The long key saved on your Mac.")
-            if st.form_submit_button("🔐 Unlock", width="stretch"):
-                if auth.check_owner_key(user, _typed, _owner_email, _owner_key):
-                    st.session_state["admin_unlocked"] = user
-                    auth.log_event(user, "unlocked owner access")
-                    st.rerun()
-                else:
-                    time.sleep(2)   # slow down guessing
-                    auth.log_event(user, "wrong owner key entered")
-                    st.error("That key isn't right.")
     if st.button("⚙️ Settings", width="stretch", key="prof_settings",
                  help="Light/dark mode, effects, preferences, password, your data and more."):
         st.session_state["open_settings"] = True
